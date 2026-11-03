@@ -1259,16 +1259,52 @@ function stick(r0, r1, len, c, [x, y, z], rot = [0, 0, 0], seg = 10) {
   m.position.set(x, y, z); m.rotation.set(...rot); m.castShadow = m.receiveShadow = true
   return m
 }
-const BRANCH = { len: 2.6, y: 3.2, r0: 0.1, r1: 0.045 }
-function heroTree() {
-  // 樹幹在原點，一根橫枝往 +x 伸出，高 3.2 公尺，越往外越細
-  const { len, y, r0, r1 } = BRANCH
+const BRANCH = { len: 2.6, y: 3.2 }
+// 停棲的橫枝（樹的座標：樹幹在原點、枝條往 +x）：從樹幹斜斜往上長出來、慢慢轉平，末端微微下垂；
+// 越往外越細，和樹幹接的地方粗一點。center(x) 是枝條中心高度、radius(x) 是半徑。
+const limb = {
+  center: (x) => 3.2 - 0.85 * Math.pow(1 - ss(x, -0.25, 1.6), 1.6) - 0.07 * ss(x, 2.2, 3.0),
+  // 和樹幹接的地方慢慢變粗（枝領），不是一個圓頭插在樹幹上
+  radius: (x) => lerp(0.11, 0.038, clamp(x / 2.95, 0, 1)) + 0.1 * Math.exp(-Math.max(x, 0) / 0.32),
+  z: (x) => 0.03 * Math.sin(x * 2.1 + 0.5) * ss(x, 0.3, 1),
+}
+const barkPaint = (o, u, s, c, p) => o.copy(tmp.set(BARK)).multiplyScalar(0.85 + 0.25 * ss(s, -0.6, 0.8))
+// 沿 [[x, y, z, r], ...] 長一根逐漸變細的枝
+function bough(pts) {
+  return loft(pts.map(([x, y, z, r]) => [x, y, z, r, r]), barkPaint, { seg: 12, sub: 4, up: V(0, 0, 1), material: mat(BARK, 0.9) })
+}
+function heroTree(away = -1) {
+  // away：樹座標裡背對鏡頭的 z 方向；小枝往那邊長，才不會擋住停在枝上的動物
+  const { len } = BRANCH
   const trunk = stick(0.26, 0.34, 7, BARK, [0, 7, 0], [0, 0, 0], 14)
-  const branch = stick(r0, r1, len + 0.3, BARK, [0, y, 0], [0, 0, Math.PI / 2], 12)
-  const twig = stick(0.035, 0.02, 0.9, BARK, [len * 0.7, y, 0], [0, 0, 2.6])
-  const tip = new THREE.Mesh(SPH, mat(BARK, 0.9)); tip.scale.setScalar(r1); tip.position.set(len + 0.3, y, 0)
+  const pts = []
+  for (let x = -0.25; x <= 2.95; x += 0.08) pts.push([x, limb.center(x), limb.z(x), limb.radius(x)])   // 從樹幹裡面開始長
+  const branch = bough(pts)
+  // 枝條末段分出幾根小枝，往外往上彎，末端是一小簇葉子（不再有直直戳上去的棍子）
+  const g = new THREE.Group().add(trunk, branch)
+  const twig = (x0, dir, up, L, r0, leaf) => {
+    const y0 = limb.center(x0), z0 = limb.z(x0), q = []
+    for (let k = 0; k <= 6; k++) {
+      const f = k / 6
+      q.push([x0 + L * f * 0.75, y0 + L * up * f * f + L * 0.15 * f, z0 + dir * L * f * 0.65, lerp(r0, r0 * 0.35, f)])
+    }
+    g.add(bough(q))
+    // 小枝末端是鬆散的一叢葉子（只有葉片、沒有實心的球），沿小枝方向拉長、上下壓扁
+    for (let k = 0; k < 2; k++) {
+      const [lx, ly, lz] = q[4 + k * 2], m = new THREE.Mesh(leafCardGeometry(26, true), leafCardMaterial(0x5a9440))
+      const r = leaf * (1 + k * 0.4)
+      m.scale.set(r * 1.3, r * 0.8, r * 1.1); m.position.set(lx, ly + r * 0.2, lz); m.rotation.set(0.3 * k, k * 1.7, 0.2)
+      g.add(m)
+    }
+  }
+  // 動物停在 x ≈ 1.8～2.4，小枝長在靠樹幹那段和末端
+  twig(1.0, away, 0.9, 0.7, 0.035, 0.22)
+  twig(2.65, away * 0.8, 0.45, 0.5, 0.022, 0.18)
+  twig(2.9, away * 0.3, 0.3, 0.4, 0.018, 0.16)
   const blob = (r, x, yy, z) => { const m = crownBlob(0x5a9440, r); m.position.set(x, yy, z); return m }
-  return new THREE.Group().add(trunk, branch, twig, tip, blob(2.6, 0, 7.2, 0), blob(2.0, 1.6, 6.2, 0.6), blob(1.8, -1.4, 6.0, -0.5), blob(1.2, len * 0.9, 5.0, -0.8))
+  g.add(blob(2.6, 0, 7.2, 0), blob(2.0, 1.6, 6.2, 0.6), blob(1.8, -1.4, 6.0, -0.5))
+  g.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true })
+  return g
 }
 function rock(r, seed) {
   const g = mergeVertices(new THREE.IcosahedronGeometry(1, 3).deleteAttribute('normal').deleteAttribute('uv'))
@@ -1309,8 +1345,8 @@ export function placeAnimal(def, waterY) {
     target.set(x, 1.0, z)
     dist = 6; camH = 1.8
   } else if (def.perch === 'branch') {
-    const { len, y, r0, r1 } = BRANCH
-    const tree = heroTree()
+    const { len, y } = BRANCH
+    const tree = heroTree(-1)   // 樹座標 +z 正好朝鏡頭
     // 樹幹放在動物的側邊，枝條朝動物伸過來
     tree.position.copy(side).multiplyScalar(-len)
     tree.rotation.y = Math.atan2(-side.z, side.x)
@@ -1319,7 +1355,8 @@ export function placeAnimal(def, waterY) {
     obj.position.y = y
     obj.rotation.y = tree.rotation.y
     env.toCam = toCam.clone().applyAxisAngle(V(0, 1, 0), -obj.rotation.y)
-    env.branch = { min: -len * 0.8, max: 0.15, top: (s) => lerp(r0, r1, (s + len) / (len + 0.3)) }
+    // 枝條表面的高度（obj 座標，s = 樹的 x - len）
+    env.branch = { min: -len * 0.8, max: 0.15, top: (s) => limb.center(s + len) + limb.radius(s + len) - y }
     target.set(x, 3.6, z)
     dist = 5; camH = 3.4
   } else if (def.perch === 'trunk') {

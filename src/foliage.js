@@ -93,9 +93,11 @@ function leafTexture() {
 }
 
 /* ---------- 葉片卡：貼在單位樹冠表面的一圈小方片，法線朝外，光影才會跟樹冠一致 ---------- */
-let _cards
-export function leafCardGeometry(n = 200) {
-  if (_cards) return _cards
+const _cards = {}
+// spray：小枝末端用的鬆散葉叢，葉片散在整個體積裡、數量少，看得到枝條和空隙
+export function leafCardGeometry(n = 200, spray = false) {
+  const key = n + (spray ? 's' : '')
+  if (_cards[key]) return _cards[key]
   const pos = [], nor = [], uv = [], col = [], idx = []
   const d = new THREE.Vector3(), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), cn = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0)
   for (let i = 0; i < n; i++) {
@@ -103,7 +105,7 @@ export function leafCardGeometry(n = 200) {
     const u = (i + 0.5) / n, phi = i * 2.399963 + hashR() * 0.3
     const y = 1 - 2 * u, s = Math.sqrt(1 - y * y)
     d.set(Math.cos(phi) * s, y, Math.sin(phi) * s).normalize()
-    const r = canopyBump(d) * (0.9 + hashR() * 0.12)
+    const r = spray ? 0.25 + 0.75 * Math.cbrt(hashR()) : canopyBump(d) * (0.9 + hashR() * 0.12)
     const c = d.clone().multiplyScalar(r)
     if (c.y < 0) c.y *= 0.75
     // 方片大致朝外，再隨機傾斜
@@ -129,7 +131,7 @@ export function leafCardGeometry(n = 200) {
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
   g.setIndex(idx)
   g.computeBoundingSphere()
-  return (_cards = g)
+  return (_cards[key] = g)
 }
 
 const _cardMats = {}
