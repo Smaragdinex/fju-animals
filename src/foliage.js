@@ -174,13 +174,18 @@ export function leafCardMaterial(color = 0xffffff) {
 }
 
 /* ---------- 草葉 ---------- */
-// 一片草：四段、越上越窄，頂端收成一點；實際位置、高度、方向在 shader 裡依每片的資料擺
+// 一片草：五段、越上越窄，頂端收成一點；中間多一排頂點，葉面沿中肋稍微摺起來（V 形），光線才有明暗。
+// 實際位置、高度、彎曲、方向在 shader 裡依每片的資料擺
 function bladeGeometry() {
-  const ys = [0, 0.35, 0.7], ws = [1, 0.8, 0.5], pos = [], idx = []
-  ys.forEach((y, i) => pos.push(-0.5 * ws[i], y, 0, 0.5 * ws[i], y, 0))
+  const ys = [0, 0.22, 0.44, 0.64, 0.82], ws = [1, 0.92, 0.78, 0.6, 0.38], pos = [], idx = []
+  ys.forEach((y, i) => pos.push(-0.5 * ws[i], y, 0, 0, y, 0, 0.5 * ws[i], y, 0))
   pos.push(0, 1, 0)
-  for (let i = 0; i < 2; i++) { const a = i * 2; idx.push(a, a + 1, a + 3, a, a + 3, a + 2) }
-  idx.push(4, 5, 6)
+  for (let i = 0; i < ys.length - 1; i++) {
+    const a = i * 3, b = a + 3
+    idx.push(a, a + 1, b + 1, a, b + 1, b, a + 1, a + 2, b + 2, a + 1, b + 2, b + 1)
+  }
+  const top = ys.length * 3, l = top - 3
+  idx.push(l, l + 1, top, l + 1, l + 2, top)
   const g = new THREE.InstancedBufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3))
@@ -201,11 +206,14 @@ function grassMaterial(bake) {
         varying vec2 vBakeUv;
         varying vec3 vGcol;`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
-        // 法線朝上：草地的光影和底下的地面貼圖一致，遠看接得起來
-        objectNormal = vec3(0.0, 1.0, 0.0);`)
+        // 法線大致朝上（草地的光影和底下的地面貼圖一致，遠看接得起來），
+        // 再往葉面方向偏一點、左右兩半偏不同邊（V 形摺），近看每片草有亮面暗面
+        vec2 nd = vec2(cos(gInst.w), sin(gInst.w));
+        vec3 faceN = vec3(nd.x, 0.0, nd.y) * (fract(gInst.w * 3.7) > 0.5 ? 1.0 : -1.0) + vec3(-nd.y, 0.0, nd.x) * sign(position.x) * 0.6;
+        objectNormal = normalize(vec3(0.0, 1.0, 0.0) + faceN * 0.55);`)
       .replace('#include <begin_vertex>', `
         float a = gInst.w, h = gInst.z, y = position.y;
-        float lean = 0.15 + fract(a * 7.13) * 0.45;
+        float lean = 0.12 + fract(a * 7.13) * 0.55;
         // 風：大片慢慢的起伏 + 小的抖動
         float w = sin(uTime * 1.3 + gInst.x * 0.31 + gInst.y * 0.17) * 0.6 + sin(uTime * 3.1 + gInst.x * 2.1 + gInst.y * 1.7) * 0.2;
         vec2 dir = vec2(cos(a), sin(a));
@@ -213,7 +221,9 @@ function grassMaterial(bake) {
         transformed.xz = gInst.xy + vec2(-dir.y, dir.x) * position.x * gCol.w;
         transformed.xz += dir * lean * y * y * h + vec2(0.7, 0.35) * w * y * y * h * 0.35;
         transformed.y = 0.003 + y * h * (1.0 - 0.15 * lean);
-        vGcol = gCol.rgb * mix(0.45, 1.12, y);
+        // 根部暗（被別的草擋住光）、尖端亮，三成的草尖端微微發黃
+        vGcol = gCol.rgb * mix(0.4, 1.15, y);
+        vGcol = mix(vGcol, vec3(0.78, 0.74, 0.42) * dot(gCol.rgb, vec3(0.5)) * 1.6, smoothstep(0.65, 1.0, y) * step(0.7, fract(a * 13.7)) * 0.45);
         vBakeUv = vec2((gInst.x - ${CORE.x0.toFixed(1)}) / ${CORE.size.toFixed(1)}, 1.0 - (gInst.y - ${CORE.z0.toFixed(1)}) / ${CORE.size.toFixed(1)});`)
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform sampler2D bakeMap;\nvarying vec2 vBakeUv;\nvarying vec3 vGcol;')
@@ -241,8 +251,19 @@ function grassPatch(ground, cx, cz, R, peak, mat) {
   const cv = ground.map.image, k = cv.width / CORE.size
   const px0 = Math.floor((cx - R - CORE.x0) * k), pz0 = Math.floor((cz - R - CORE.z0) * k), pw = Math.ceil(2 * R * k) + 2
   const img = cv.getContext('2d').getImageData(px0, pz0, pw, pw).data
-  const inst = [], cols = [], c = new THREE.Color()
+  const inst = [], cols = [], c = new THREE.Color(), dryC = new THREE.Color(0.55, 0.5, 0.28)
+  const flowers = []
   const n = Math.round(Math.PI * R * R * peak * 0.55)
+  const blade = (x, z, f, gn, base, a, hMul = 1) => {
+    c.copy(base)
+    // 每片草一點點色差，少數是枯黃的
+    if (Math.random() < 0.05) c.lerp(dryC, 0.6)
+    else c.offsetHSL((Math.random() - 0.5) * 0.035, (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08)
+    const h = (0.05 + Math.random() * 0.1 + (gn > 0.62 ? 0.05 : 0)) * (0.45 + 0.55 * f) * hMul
+    inst.push(x, z, h, a)
+    cols.push(c.r, c.g, c.b, 0.007 + Math.random() * 0.008)
+  }
+  const base = new THREE.Color()
   for (let i = 0; i < n; i++) {
     const r = R * Math.sqrt(Math.random()), t = Math.random() * Math.PI * 2
     // 中心最密，往外漸疏、漸矮，邊緣自然融進地面貼圖
@@ -253,14 +274,21 @@ function grassPatch(ground, cx, cz, R, peak, mat) {
     const o = (iz * pw + ix) * 4, R8 = img[o], G8 = img[o + 1], B8 = img[o + 2]
     if (!(G8 > R8 + 12 && G8 > B8 + 12)) continue      // 只長在綠地上
     const gn = gNoise(x * 0.35, z * 0.35) * 0.6 + gNoise(x * 2.3, z * 2.3) * 0.25 + gHash(Math.floor(x * 9), Math.floor(z * 9)) * 0.15
-    c.setRGB(R8 / 255, G8 / 255, B8 / 255, THREE.SRGBColorSpace).multiplyScalar(0.86 + gn * 0.26)
-    // 每片草一點點色差，少數是枯黃的
-    const dry = Math.random() < 0.06
-    if (dry) c.lerp(new THREE.Color(0.55, 0.5, 0.28), 0.6)
-    else c.offsetHSL((Math.random() - 0.5) * 0.03, 0, (Math.random() - 0.5) * 0.06)
-    const h = (0.06 + Math.random() * 0.09 + (gn > 0.62 ? 0.06 : 0)) * (0.45 + 0.55 * f)
-    inst.push(x, z, h, Math.random() * Math.PI * 2)
-    cols.push(c.r, c.g, c.b, 0.012 + Math.random() * 0.01)
+    base.setRGB(R8 / 255, G8 / 255, B8 / 255, THREE.SRGBColorSpace).multiplyScalar(0.86 + gn * 0.26)
+    const u = Math.random()
+    if (u < 0.3) {
+      // 一叢：3～7 片從同一點往外散開
+      const m = 3 + Math.floor(Math.random() * 5), a0 = Math.random() * Math.PI * 2
+      for (let j = 0; j < m; j++) {
+        const a = a0 + (j / m) * Math.PI * 2 + (Math.random() - 0.5) * 0.6, d = Math.random() * 0.025
+        blade(x + Math.cos(a) * d, z + Math.sin(a) * d, f, gn, base, a, 1.1)
+      }
+    } else if (u < 0.31) {
+      // 抽穗的草：又細又高
+      blade(x, z, f, gn, base, Math.random() * Math.PI * 2, 2.2)
+    } else blade(x, z, f, gn, base, Math.random() * Math.PI * 2)
+    // 零星的小野花（白色、黃色）
+    if (Math.random() < 0.01 && gNoise(x * 0.8 + 7, z * 0.8) > 0.55) flowers.push(x, z, Math.random() < 0.6 ? 0 : 1)
   }
   const g = bladeGeometry()
   g.setAttribute('gInst', new THREE.InstancedBufferAttribute(new Float32Array(inst), 4))
@@ -270,7 +298,28 @@ function grassPatch(ground, cx, cz, R, peak, mat) {
   const mesh = new THREE.Mesh(g, mat)
   mesh.receiveShadow = true
   mesh.frustumCulled = true
+  if (flowers.length) mesh.add(flowerPatch(flowers))
   return mesh
+}
+
+// 小野花：每朵是一顆壓扁的小多面體，長在一根細莖上（莖就是一片很細的草，畫在花的 mesh 裡）
+const FLOWER_C = [new THREE.Color(0.96, 0.95, 0.9), new THREE.Color(0.98, 0.82, 0.2)]
+function flowerPatch(fl) {
+  const n = fl.length / 3, head = new THREE.IcosahedronGeometry(0.011, 0).scale(1, 0.55, 1)
+  const stem = new THREE.CylinderGeometry(0.0015, 0.002, 1, 3).translate(0, 0.5, 0)
+  const heads = new THREE.InstancedMesh(head, new THREE.MeshStandardMaterial({ roughness: 0.8 }), n)
+  const stems = new THREE.InstancedMesh(stem, new THREE.MeshStandardMaterial({ color: 0x5f8a3a, roughness: 0.9 }), n)
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+  for (let i = 0; i < n; i++) {
+    const x = fl[i * 3], z = fl[i * 3 + 1], h = 0.07 + Math.random() * 0.08
+    q.setFromEuler(e.set((Math.random() - 0.5) * 0.3, 0, (Math.random() - 0.5) * 0.3))
+    stems.setMatrixAt(i, m.compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(1, h, 1)))
+    const top = new THREE.Vector3(0, h, 0).applyQuaternion(q).add(new THREE.Vector3(x, 0, z))
+    heads.setMatrixAt(i, m.compose(top, q, new THREE.Vector3(1, 1, 1)))
+    heads.setColorAt(i, FLOWER_C[fl[i * 3 + 2]])
+  }
+  const g = new THREE.Group(); g.add(stems, heads)
+  return g
 }
 
 /* ---------- 組起來：每個動物地點一組草葉 + 附近樹冠的葉片 ---------- */
@@ -283,7 +332,7 @@ export function buildDetail(scene, ground, animals, blobs) {
     const group = new THREE.Group()
     // 停在枝上的鏡頭比較高，地面只露一點，草少一點
     const high = a.def.perch === 'branch'
-    group.add(grassPatch(ground, x, z, high ? 10 : 14, (high ? 140 : 300) * (small ? 0.5 : 1), gMat))
+    group.add(grassPatch(ground, x, z, high ? 10 : 14, (high ? 160 : 360) * (small ? 0.45 : 1), gMat))
     // 鏡頭和動物附近的樹冠加上葉片（手機範圍小一點）
     const reach = small ? 30 : 55
     const near = blobs.filter((b) => Math.min(Math.hypot(b.x - x, b.z - z), Math.hypot(b.x - a.cam.x, b.z - a.cam.z)) < reach)
