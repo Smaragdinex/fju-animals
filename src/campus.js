@@ -2,6 +2,7 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { buildGround, bakeGround } from './ground.js'
+import { canopyBump, leafify, barkify } from './foliage.js'
 
 export const WATER_Y = 0.12
 
@@ -227,7 +228,9 @@ export async function buildCampus(scene) {
     plantTrees(clearSpots) {
       keepClear.push(...clearSpots)
       const ok = trees.filter((p) => !nearBuilding(p) && !onRoad(p) && !keepClear.some(([x, z, r]) => Math.hypot(p[0] - x, p[1] - z) < r))
-      scene.add(makeTrees(ok))
+      const forest = makeTrees(ok)
+      scene.add(forest)
+      this.treeBlobs = forest.userData.blobs
       return ok.length
     },
   }
@@ -244,9 +247,7 @@ export function canopyGeometry() {
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i)
     // 一團團的葉簇：幾個不同頻率的起伏疊起來
-    const bump = Math.sin(v.x * 5.1 + 1.3) * Math.sin(v.y * 4.7 + 0.4) * Math.sin(v.z * 5.3 + 2.1) * 0.13
-      + Math.sin(v.x * 11 + v.z * 7) * Math.sin(v.y * 9 + 1) * 0.04
-    v.multiplyScalar(1 + bump)
+    v.multiplyScalar(canopyBump(v))
     if (v.y < 0) v.y *= 0.75     // 底部比較平
     p.setXYZ(i, v.x, v.y, v.z)
     const k = THREE.MathUtils.lerp(0.55, 1.08, THREE.MathUtils.smoothstep(v.y, -0.8, 0.9))
@@ -264,12 +265,13 @@ export function treeParts() {
 }
 function makeTrees(pts) {
   const { trunk, blob } = treeParts()
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6d5544, roughness: 1 })
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, vertexColors: true })
+  const trunkMat = barkify(new THREE.MeshStandardMaterial({ color: 0x6d5544, roughness: 1 }))
+  const leafMat = leafify(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, vertexColors: true }))
   const tI = new THREE.InstancedMesh(trunk, trunkMat, pts.length)
   const lI = new THREE.InstancedMesh(blob, leafMat, pts.length * 5)
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color()
   let li = 0
+  const blobs = []   // 給近景加葉片用
   pts.forEach(([x, z], i) => {
     const H = 5 + rand() * 6, R = 2.2 + rand() * 2
     q.setFromEuler(new THREE.Euler(0, rand() * 6.28, 0))
@@ -284,6 +286,7 @@ function makeTrees(pts) {
       m.compose(p.set(x + Math.cos(a) * d, H * 0.62 + R * 0.5 + (j ? (rand() - 0.3) * R * 0.5 : R * 0.15), z + Math.sin(a) * d), q, s.set(r, r * 0.8, r))
       lI.setMatrixAt(li, m)
       lI.setColorAt(li, c.setHSL(hue + (rand() - 0.5) * 0.02, 0.45, lig + (rand() - 0.5) * 0.05))
+      blobs.push({ x: p.x, z: p.z, m: m.clone(), c: c.clone() })
       li++
     }
   })
@@ -292,5 +295,6 @@ function makeTrees(pts) {
   tI.receiveShadow = lI.receiveShadow = true
   const g = new THREE.Group()
   g.add(tI, lI)
+  g.userData.blobs = blobs
   return g
 }

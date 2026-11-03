@@ -3,6 +3,7 @@
 import * as THREE from 'three'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { canopyGeometry } from './campus.js'
+import { leafify, barkify, leafCardGeometry, leafCardMaterial } from './foliage.js'
 
 const { clamp, lerp, smoothstep: ss, randFloat: rnd } = THREE.MathUtils
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z)
@@ -1254,6 +1255,14 @@ function turtles(env) {
 
 /* ---------- 停棲處 ---------- */
 const BARK = 0x6d5544
+barkify(mat(BARK, 0.9))
+// 樹冠：一團平滑的球 + 表面一圈葉片
+function crownBlob(color, r) {
+  const m = new THREE.Mesh(canopyGeometry(), leafify(new THREE.MeshStandardMaterial({ color, roughness: 0.85, vertexColors: true })))
+  m.scale.setScalar(r); m.castShadow = true
+  m.add(new THREE.Mesh(leafCardGeometry(), leafCardMaterial(color)))
+  return m
+}
 function stick(r0, r1, len, c, [x, y, z], rot = [0, 0, 0], seg = 10) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, seg).translate(0, -len / 2, 0), mat(c, 0.9))
   m.position.set(x, y, z); m.rotation.set(...rot); m.castShadow = m.receiveShadow = true
@@ -1267,8 +1276,7 @@ function heroTree() {
   const branch = stick(r0, r1, len + 0.3, BARK, [0, y, 0], [0, 0, Math.PI / 2], 12)
   const twig = stick(0.035, 0.02, 0.9, BARK, [len * 0.7, y, 0], [0, 0, 2.6])
   const tip = new THREE.Mesh(SPH, mat(BARK, 0.9)); tip.scale.setScalar(r1); tip.position.set(len + 0.3, y, 0)
-  const leaves = new THREE.MeshStandardMaterial({ color: 0x5a9440, roughness: 0.85, vertexColors: true })
-  const blob = (r, x, yy, z) => { const m = new THREE.Mesh(canopyGeometry(), leaves); m.scale.setScalar(r); m.position.set(x, yy, z); m.castShadow = true; return m }
+  const blob = (r, x, yy, z) => { const m = crownBlob(0x5a9440, r); m.position.set(x, yy, z); return m }
   return new THREE.Group().add(trunk, branch, twig, tip, blob(2.6, 0, 7.2, 0), blob(2.0, 1.6, 6.2, 0.6), blob(1.8, -1.4, 6.0, -0.5), blob(1.2, len * 0.9, 5.0, -0.8))
 }
 function rock(r, seed) {
@@ -1326,8 +1334,7 @@ export function placeAnimal(def, waterY) {
   } else if (def.perch === 'trunk') {
     const R = 0.42
     const trunk = stick(R * 0.95, R * 1.08, 8, BARK, [0, 8, 0], [0, 0, 0], 16)
-    const leaves = new THREE.MeshStandardMaterial({ color: 0x55903c, roughness: 0.85, vertexColors: true })
-    const crown = new THREE.Mesh(canopyGeometry(), leaves); crown.scale.setScalar(3); crown.position.y = 8.6; crown.castShadow = true
+    const crown = crownBlob(0x55903c, 3); crown.position.y = 8.6
     g.add(trunk, crown)
     obj.rotation.y = Math.atan2(toCam.x, toCam.z)   // obj 的 +z 朝鏡頭
     env.trunk = { R, arc: 0.16 }

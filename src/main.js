@@ -2,6 +2,7 @@
 import * as THREE from 'three'
 import { buildCampus, WATER_Y, useRenderer } from './campus.js'
 import { placeAnimal } from './models.js'
+import { buildDetail } from './foliage.js'
 import { ANIMALS } from './animals.js'
 
 const canvas = document.getElementById('scene')
@@ -75,7 +76,7 @@ story.addEventListener('click', (e) => { const b = e.target.closest('[data-go]')
 /* ---------- 場景 ---------- */
 const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vector3(-10, 0, -10) }
 const OUTRO = { pos: new THREE.Vector3(-420, 380, 420), target: new THREE.Vector3(0, 0, 40) }
-let shots = [], animals = [], pins = [], ready = false
+let shots = [], animals = [], pins = [], ready = false, detail = null
 
 async function init() {
   useRenderer(renderer)
@@ -95,6 +96,8 @@ async function init() {
   // 地面的陽光陰影與天光遮蔽一次烘好，之後地面不再即時算陰影
   const baked = campus.bake(renderer, SUN_DIR)
   console.log(`[fju] 地面烘焙 ${baked.ms} ms`)
+  // 近景的草葉和樹冠葉片（一次只畫鏡頭所在的那一處）
+  detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
   makePins(campus)
   Object.assign(window.__fju, { campus, animals })
@@ -226,6 +229,7 @@ function frame() {
   // 除錯：__fju.pause = true 讓動物停住
   if (!window.__fju.pause) for (const a of animals) if (a.target.distanceTo(camera.position) < 200) a.update(t, dt)
   const active = nearest >= 1 && nearest <= animals.length ? nearest - 1 : -1
+  detail?.update(camera.position, t)
   updatePins(active)
   ;[...dots.children].forEach((d, i) => d.classList.toggle('on', i === nearest))
   renderer.render(scene, camera)

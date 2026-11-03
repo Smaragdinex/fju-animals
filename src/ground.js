@@ -141,7 +141,7 @@ export function buildGround(scene, data) {
   const nearMesh = new THREE.Mesh(plane(CORE, 0), nearMat)
   scene.add(farMesh, nearMesh)
   return {
-    mesh: nearMesh, res: maxTex,
+    mesh: nearMesh, res: maxTex, map: near, bake: nearMat.userData.bake,
     // 烘完把結果接上；外圍那張只用天光，不另外烘
     setBake(tex) { nearMat.userData.bake.value = tex },
   }
