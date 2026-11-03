@@ -28,6 +28,14 @@ if kind == 'nightheron':
         B['thigh' + n] = ((s * 0.07, 0.4, 0.2), (s * 0.075, 0.28, 0.27), 'body', 0.35)
         B['shin' + n] = ((s * 0.075, 0.28, 0.27), (s * 0.075, 0.035, 0.17), 'thigh' + n, 0.35)
         B['foot' + n] = ((s * 0.075, 0.035, 0.17), (s * 0.075, 0.0, -0.08), 'shin' + n, 0.35)
+elif kind == 'barbet':
+    # 五色鳥（Tripo 生成）：頭朝 -x 偏 -z、身體斜站；左右方向約 (-0.47, 0, 0.88)
+    B = {'body': ((0.1, 0.55, 0.08), (-0.1, 0.82, 0.0), None, 1.0),
+         'neck': ((-0.1, 0.82, 0.0), (-0.17, 0.9, -0.03), 'body', 0.8),
+         'head': ((-0.17, 0.9, -0.03), (-0.35, 0.88, -0.08), 'neck', 0.8),
+         'tail': ((0.12, 0.56, 0.12), (0.17, 0.37, 0.17), 'body', 0.6)}
+    for s, n in ((1, 'L'), (-1, 'R')):
+        B['wing' + n] = ((-0.06 - s * 0.04, 0.79, 0.0 + s * 0.075), (0.12 - s * 0.04, 0.56, 0.1 + s * 0.075), 'body', 0.35)
 else:
     # 攀蜥：頭朝 -x、尾巴繞一圈
     B = {'pelvis': ((0.9, 0.0, 0.0), (0.4, 0.08, 0.0), None, 1.0),
@@ -68,7 +76,7 @@ for v in ob.data.vertices:
     ds = sorted(((segd(v.co, h, t) / r, n) for n, (h, t, r) in segs.items()))
     # 腳和尾巴互不借權重（掃描時尾巴尖貼著後腳趾，不擋的話尾巴一動腳趾就被拉走）
     leg = lambda n: n[:2] in ('fl', 'fr', 'hl', 'hr')
-    tail = lambda n: n.startswith('tail') and int(n[4:]) >= 2
+    tail = lambda n: n.startswith('tail') and n[4:].isdigit() and int(n[4:]) >= 2
     if leg(ds[0][1]): ds = [d for d in ds if not tail(d[1])]
     elif tail(ds[0][1]): ds = [d for d in ds if not leg(d[1])]
     ds = ds[:3]

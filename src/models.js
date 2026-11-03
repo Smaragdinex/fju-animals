@@ -791,38 +791,7 @@ const BUILD = {
     }
   },
 
-  barbet(env) {
-    // 五色鳥：綠身體、藍臉、黃額黃喉、紅色眼先，會鼓著喉嚨「咯咯咯」叫
-    const P = K({ green: 0x3f9a3f, belly: 0x79b54e, blue: 0x2f6fd0, yellow: 0xf2d12c, red: 0xd42a20, black: 0x111111, wing: 0x3a8c3c, prim: 0x2a6a5a, tail: 0x2f7f6a })
-    const b = bird({
-      L: 0.08, R: 0.034, pitch: -0.8,
-      neck: { len: 0.012, r: 0.022, lean: 0.6 },
-      head: { r: 0.023, long: 1.0, w: 0.92 },
-      bill: { len: 0.022, w: 0.008, h: 0.009, curve: 0.003, c1: 0x1c1c1c },
-      eye: { r: 0.0042, iris: 0x5a2418 },
-      wing: { len: 0.07, h: 0.034 },
-      tail: { len: 0.05, w: 0.03, cock: 0.2 },
-      legs: { tib: 0.016, tar: 0.018, r: 0.0025, c: 0x6f7768, thigh: 0x5aa04a, toe: 0.014, x: 0.011, stand: 0.55 },
-      paint: {
-        body: (o, u, s, c) => {
-          o.copy(P.green).lerp(P.belly, ss(-s, -0.1, 0.4))
-          o.lerp(P.blue, ss(u, 0.82, 0.88) * ss(-s, 0.2, 0.5))
-          o.lerp(P.red, ss(u, 0.88, 0.93) * ss(-s, 0.55, 0.8) * ss(0.4, 0.2, Math.abs(c)))
-        },
-        wing: (o, u, s) => o.copy(P.wing).lerp(P.prim, ss(u, 0.5, 0.7) * ss(-s, -0.6, 0.3)),
-        tail: solid(P.tail),
-        neck: (o, u, s) => o.copy(P.green).lerp(P.yellow, ss(-s, 0.1, 0.4)),
-        head: (o, u, s, c, q) => {
-          o.copy(P.blue).lerp(P.green, ss(-q.z, 0.45, 0.7))
-          o.lerp(P.yellow, ss(q.z, 0.4, 0.55) * ss(q.y, 0.25, 0.4))                      // 黃額
-          o.lerp(P.black, ss(Math.abs(q.x), 0.5, 0.6) * band2(q.y, 0.08, 0.32) * band2(q.z, -0.45, 0.55))   // 過眼黑線
-          o.lerp(P.red, ss(q.z, 0.55, 0.65) * band2(q.y, -0.05, 0.25) * ss(Math.abs(q.x), 0.3, 0.45))   // 紅眼先
-          o.lerp(P.yellow, ss(-q.y, 0.35, 0.5))                                          // 黃喉
-        },
-      },
-    })
-    return perchBird(b, 4.2, env, { hopper: { rest: [2, 7] }, acts: { idle: [4, 2, 5], call: [3, 2, 4], preen: [0.8, 1.5, 3] }, custom: songbirdActs })
-  },
+  barbet: barbet,
 
   treepie(env) {
     // 樹鵲：長尾巴，跳一下尾巴就像鐘擺一樣晃
@@ -894,7 +863,7 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
+  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
@@ -981,6 +950,44 @@ function nightHeron(env) {
     focus.set(w.p.x, 0.6, w.p.y)
   }
   return { obj: root, focus, update, acts, walker: w }
+}
+
+/* ---------- 五色鳥（照片用 Tripo 生成 3D、Blender 綁骨架） ---------- */
+// 模型座標：頭朝 -x 偏 -z、身體斜站，左右方向約 (-0.47, 0, 0.88)；腳抓在 (0.08, 0.545, 0.03)。
+// 骨頭：body → neck → head、tail、兩翼。沿用枝上跳的 Hopper；停著時一下一下轉頭，鳴叫時頭一點一點、喉嚨鼓動。
+function barbet(env) {
+  const r = rigged('barbet-rig')
+  const k = 0.62, LAT = V(-0.47, 0, 0.88).normalize()
+  const root = new THREE.Group(), inner = new THREE.Group()
+  r.model.scale.setScalar(k); r.model.position.set(-0.08 * k, -0.545 * k, -0.03 * k)
+  inner.add(r.model); inner.rotation.y = 2.07   // 頭轉到 +z
+  root.add(inner)
+  const hp = new Hopper(env, { rest: [2, 7] })
+  const gl = new Glance([0.5, 1.6], 0.8, 0.3)
+  const acts = new Acts({ idle: [4, 2, 5], call: [3, 2, 4], preen: [0.8, 1.5, 3] })
+  const c = { yaw: 0, pitch: 0, call: 0, preen: 0 }, focus = V()
+  const update = (t, dt) => {
+    acts.tick(dt)
+    if (acts.name !== 'idle') hp.wait = Math.max(hp.wait, 0.3)   // 做別的事時不跳
+    hp.update(dt); gl.update(dt)
+    const air = hp.hopping ? Math.sin(Math.PI * hp.k) : 0
+    const land = Math.exp(-hp.landed * 4) * Math.sin(hp.landed * 14)
+    c.yaw = damp(c.yaw, acts.name === 'preen' ? 1.2 * acts.sgn : gl.yaw, acts.name === 'preen' ? 6 : 18, dt)
+    c.pitch = damp(c.pitch, acts.name === 'preen' ? 0.5 : gl.hp, 18, dt)
+    c.call = damp(c.call, acts.name === 'call' ? 1 : 0, 6, dt)
+    // 五色鳥叫「ko-tok-tok」：頭一點一點、身體跟著微微一縮一縮
+    const beat = c.call * Math.max(0, Math.sin(t * 9))
+    r.reset()
+    r.turn('body', LAT, -0.25 * hp.pre + 0.15 * air + 0.04 * beat)
+    r.turn('neck', AX.y, c.yaw * 0.45); r.turn('neck', LAT, c.pitch * 0.4 + 0.12 * beat)
+    r.turn('head', AX.y, c.yaw * 0.55); r.turn('head', LAT, c.pitch * 0.6 + 0.18 * beat)
+    r.turn('tail', LAT, 0.4 * land + 0.25 * air)
+    for (const [w, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(w, AX.y, sg * 0.5 * air)
+    root.position.set(hp.s, env.branch.top(hp.s) + hp.y, 0)
+    root.rotation.y = hp.h
+    focus.set(hp.s, 0.3, 0)
+  }
+  return { obj: root, focus, update, hopper: hp, acts }
 }
 
 /* ---------- 赤腹松鼠 ---------- */

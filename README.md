@@ -41,6 +41,7 @@ python3 fju-animals/data/convert.py
   - 游泳的烏龜：[Red-eared Slider](https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62) by ffish.asia / floraZia.com，CC0
   - 夜鷺：[夜鷺](https://sketchfab.com/3d-models/e2d5eb47994c442086c92a83c60ef303) by kangsirmemes，CC BY 4.0（要標作者，網頁結尾已標示）
   - 斯文豪氏攀蜥：用同屬的 [Sakishima Tree Lizard](https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10) by ffish.asia / floraZia.com，CC0
+  - 五色鳥：用 [Tripo AI](https://www.tripo3d.ai/) 由照片生成（照片 [Taiwan barbet](https://commons.wikimedia.org/wiki/File:Taiwan_barbet.jpg) by longan Jiang，CC0）。Tripo 會連腳下的枯枝一起做，用 `tools/cut-barbet.py` 切掉，再減到 4 萬面、`tools/rig-distance.py ... barbet` 綁骨架
   - 夜鷺和攀蜥用 `tools/shrink-model.py` 減到 3 萬面，再用 `tools/rig-distance.py` 綁骨架（權重依距離算；攀蜥捲起來的尾巴在程式裡拉直）
 
 - 地圖資料 © OpenStreetMap contributors（ODbL），網頁結尾已標示來源。
