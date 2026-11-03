@@ -36,7 +36,7 @@ python3 fju-animals/data/convert.py
 ## 授權與注意
 
 - 現成模型（原檔在 `models/raw/`，不進 git；烏龜用 `tools/shrink-model.py` 減面到 4 萬面、Draco 壓縮；松鼠用 `tools/rig-squirrel.py` 綁骨架，都放在 `models/`）：
-  - 松鼠：[Eastern gray squirrel](https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8) by faerbogdan99，CC BY 4.0（要標作者，網頁結尾已標示；已改毛色）
+  - 松鼠：[Eastern gray squirrel](https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8) by faerbogdan99，CC BY 4.0（要標作者，開頭卡片的「觀察須知與資料來源」裡已標示；已改毛色）
   - 曬太陽的烏龜：[Reeve's Pond Turtle](https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc)（斑龜的近親）by ffish.asia / floraZia.com，CC0
   - 游泳的烏龜：[Red-eared Slider](https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62) by ffish.asia / floraZia.com，CC0
   - 斯文豪氏攀蜥：用同屬的 [Sakishima Tree Lizard](https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10) by ffish.asia / floraZia.com，CC0
@@ -46,7 +46,7 @@ python3 fju-animals/data/convert.py
     - 這樣 Tripo 出來的模型都是頭朝 -x、左右對稱，點位好量。停枝的鳥用 `tools/cut-below.py` 切掉腳（改用程式的 IK 腳），地上走的鳥保留腳、綁 thigh → shin → foot；腳趾由 `rig-distance.py` 自動找（腳踝以下的頂點依方向分 4 群，每根兩節，`bird-points.json` 的 `toes` 給起始方向）；走路照影片：抬腳時腳跟往前上提、跗蹠往後折、腳趾收起，落地前伸直張開。黑冠麻鷺另外把身體分兩節（body → chest）、脖子分三節（neck → neck2 → neck3），頭部用 `headRigid` 整顆綁給 head（伸脖子時頭和冠羽不變形）；綁骨架都用 `tools/rig-distance.py`（點位和切腳高度存在 `tools/bird-points.json`；白頭翁的點位寫在 rig-distance.py 裡）
   - 攀蜥用 `tools/shrink-model.py` 減到 3 萬面，再用 `tools/rig-distance.py` 綁骨架（權重依距離算；捲起來的尾巴在程式裡拉直）
 
-- 地圖資料 © OpenStreetMap contributors（ODbL），網頁結尾已標示來源。
+- 地圖資料 © OpenStreetMap contributors（ODbL），開頭卡片的「觀察須知與資料來源」裡已標示來源。
 - 衛星空拍圖有版權，只能拿來對照，不放進網站。
 - 動物地點是依照地圖上草地、樹林、池塘挑的大概位置，還需要熟悉輔大的人確認。
 

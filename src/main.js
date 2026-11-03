@@ -43,6 +43,13 @@ story.innerHTML = [
     <h1>輔大的動物鄰居</h1>
     <p>在輔仁大學的草地、樹林和池塘邊，住著不少動物。往下滑動，跟著鏡頭去認識其中 10 種。</p>
     <p class="hint">↓ 往下滑開始</p>
+    <details class="credits"><summary>觀察須知與資料來源</summary><div class="small">地點為大概的出沒範圍，動物會移動，不一定每次都看得到。<br>
+    觀察時請保持距離，不追趕、不餵食。<br>
+    地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors<br>
+    松鼠模型：<a href="https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8" target="_blank" rel="noopener">Eastern gray squirrel</a> by faerbogdan99（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>，已改毛色）<br>
+    烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）<br>
+    攀蜥模型：<a href="https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10" target="_blank" rel="noopener">Sakishima Tree Lizard</a> by ffish.asia / floraZia.com（CC0）<br>
+    黑冠麻鷺、夜鷺、五色鳥、白頭翁、綠繡眼、珠頸斑鳩、樹鵲模型：參考圖以 ChatGPT 生成，再以 Tripo AI 轉成 3D</div></details>
   </div></section>`,
   ...ANIMALS.map((a, i) => `<section class="step"><div class="card">
     <div class="num">${String(i + 1).padStart(2, '0')} / ${ANIMALS.length}</div>
@@ -51,24 +58,12 @@ story.innerHTML = [
     <div class="where">📍 ${esc(a.place)}・${esc(a.where)}</div>
     <p>${esc(a.intro)}</p>
     <details class="facts"><summary>小知識（${a.facts.length}）</summary><ul>${a.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></details>
-  </div></section>`),
-  `<section class="step last"><div class="card">
-    <h2>全部 10 種</h2>
-    <p>點名字可以再回去看一次。</p>
-    <div class="grid">${ANIMALS.map((a, i) => `<button data-go="${i + 1}">${esc(a.name)}</button>`).join('')}</div>
-    <div class="small">地點為大概的出沒範圍，動物會移動，不一定每次都看得到。<br>
-    觀察時請保持距離，不追趕、不餵食。<br>
-    地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors<br>
-    松鼠模型：<a href="https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8" target="_blank" rel="noopener">Eastern gray squirrel</a> by faerbogdan99（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>，已改毛色）<br>
-    烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）<br>
-    攀蜥模型：<a href="https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10" target="_blank" rel="noopener">Sakishima Tree Lizard</a> by ffish.asia / floraZia.com（CC0）<br>
-    黑冠麻鷺、夜鷺、五色鳥、白頭翁、綠繡眼、珠頸斑鳩、樹鵲模型：參考圖以 ChatGPT 生成，再以 Tripo AI 轉成 3D</div>
-  </div></section>`,
+  </div></section>`)
 ].join('')
 const steps = [...story.querySelectorAll('.step')]
 steps.forEach((_, i) => {
   const b = document.createElement('button')
-  b.title = i === 0 ? '開頭' : i === steps.length - 1 ? '全部' : ANIMALS[i - 1].name
+  b.title = i === 0 ? '開頭' : ANIMALS[i - 1].name
   b.onclick = () => goTo(i)
   dots.appendChild(b)
 })
@@ -82,7 +77,6 @@ story.addEventListener('click', (e) => { const b = e.target.closest('[data-go]')
 
 /* ---------- 場景 ---------- */
 const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vector3(-10, 0, -10) }
-const OUTRO = { pos: new THREE.Vector3(-420, 380, 420), target: new THREE.Vector3(0, 0, 40) }
 let shots = [], animals = [], pins = [], ready = false, detail = null
 
 async function init() {
@@ -105,7 +99,7 @@ async function init() {
   console.log(`[fju] 地面烘焙 ${baked.ms} ms`)
   // 近景的草葉和樹冠葉片（一次只畫鏡頭所在的那一處）
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
-  shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
+  shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target }))]
   makePins(campus)
   Object.assign(window.__fju, { snap, updateShadow, sun, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
   resize()
