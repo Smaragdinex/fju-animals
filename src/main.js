@@ -107,7 +107,7 @@ async function init() {
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
   makePins(campus)
-  Object.assign(window.__fju, { snap, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
+  Object.assign(window.__fju, { snap, updateShadow, sun, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
   resize()
   // 預熱：載入畫面還蓋著的時候，把每一站都先畫一次。著色器編譯、貼圖上傳、陰影都在這時做完，
   // 第一次滑到某一站時才不會卡一下、閃一下。要畫在畫面上（不是 render target），色調對應才是同一組著色器。
@@ -115,7 +115,7 @@ async function init() {
   for (const s of shots) {
     camera.position.copy(s.pos); camera.lookAt(s.target); camera.updateMatrixWorld()
     detail.update(camera.position, 0)
-    sun.target.position.copy(s.target); sun.position.copy(s.target).addScaledVector(SUN_DIR, 100)
+    updateShadow(s.target, s.pos.distanceTo(s.target))
     sun.target.updateMatrixWorld(); sun.updateMatrixWorld()
     for (const a of animals) a.update(0, 0.016)
     renderer.render(scene, camera)
@@ -217,6 +217,31 @@ function shotAt(p) {
 }
 
 let smooth = null
+// 陰影不閃的兩個關鍵：
+// 1. 範圍只用幾個固定大小（一級比一級大 1.5 倍），而且要差夠多才換級，不會每幾格就重設一次
+// 2. 中心點對齊陰影貼圖的像素格：鏡頭小小移動時，陰影貼圖整格平移，每個影子取樣的位置不變，邊緣才不會一直跳
+const SHADOW_LEVELS = [14, 21, 32, 48, 72, 108, 162, 243, 365, 540]
+const lightBasis = new THREE.Matrix4().lookAt(SUN_DIR, new THREE.Vector3(), new THREE.Vector3(0, 1, 0))
+const lightInv = lightBasis.clone().invert(), _sv = new THREE.Vector3()
+let shadowS = 0
+function updateShadow(target, dist) {
+  const want = THREE.MathUtils.clamp(dist * 0.9, 12, 540)
+  if (!shadowS || want > shadowS || want < shadowS * 0.55) {
+    const S = SHADOW_LEVELS.find((l) => l >= want) ?? 540
+    if (S !== shadowS) {
+      shadowS = S
+      const sc = sun.shadow.camera
+      Object.assign(sc, { left: -S, right: S, top: S, bottom: -S, near: 1, far: S * 4 + 100 })
+      sc.updateProjectionMatrix()
+    }
+  }
+  const texel = (2 * shadowS) / sun.shadow.mapSize.x
+  _sv.copy(target).applyMatrix4(lightInv)
+  _sv.x = Math.round(_sv.x / texel) * texel; _sv.y = Math.round(_sv.y / texel) * texel
+  _sv.applyMatrix4(lightBasis)
+  sun.target.position.copy(_sv)
+  sun.position.copy(_sv).addScaledVector(SUN_DIR, shadowS * 2 + 50)
+}
 const clock = new THREE.Clock()
 function frame() {
   requestAnimationFrame(frame)
@@ -237,15 +262,8 @@ function frame() {
   camera.lookAt(smooth.target)
 
   // 陰影範圍跟著鏡頭：近景很細、俯瞰時涵蓋全校
+  updateShadow(smooth.target, camera.position.distanceTo(smooth.target))
   const dist = camera.position.distanceTo(smooth.target)
-  const S = THREE.MathUtils.clamp(dist * 0.9, 12, 520)
-  sun.target.position.copy(smooth.target)
-  sun.position.copy(smooth.target).addScaledVector(SUN_DIR, S * 2 + 50)
-  const sc = sun.shadow.camera
-  if (Math.abs(sc.right - S) > 0.5) {
-    Object.assign(sc, { left: -S, right: S, top: S, bottom: -S, near: 1, far: S * 4 + 100 })
-    sc.updateProjectionMatrix()
-  }
 
   fill.position.copy(camera.position).add(_up.set(0, 3, 0))
   fill.target.position.copy(smooth.target)
