@@ -49,3 +49,7 @@ python3 fju-animals/data/convert.py
 - 地圖資料 © OpenStreetMap contributors（ODbL），網頁結尾已標示來源。
 - 衛星空拍圖有版權，只能拿來對照，不放進網站。
 - 動物地點是依照地圖上草地、樹林、池塘挑的大概位置，還需要熟悉輔大的人確認。
+
+## 部署
+
+push 到 main 約一分鐘上線。GitHub Pages 會把 JS 和模型檔快取 10 分鐘，所以 push 前先跑 `tools/bump-version.sh` 換掉 `index.html` 裡的 `?v=` 版本號（JS 經 importmap、模型經 `VER` 都會跟著換），訪客重新整理就會拿到新版。

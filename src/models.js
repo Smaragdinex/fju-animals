@@ -289,7 +289,7 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig', 'bulbul-rig', 'whiteeye-rig', 'treepie-rig', 'dove-rig', 'heron-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
+  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig', 'bulbul-rig', 'whiteeye-rig', 'treepie-rig', 'dove-rig', 'heron-rig'].map((n) => L.loadAsync(`models/${n}.glb?v=${VER}`).then((g) => { GLB[n] = g.scene })))
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
@@ -324,6 +324,8 @@ function rigged(name, { straight = {} } = {}) {
     },
   }
 }
+// 版本號跟著 index.html 的 ?v= 走，模型檔才不會用到快取的舊版
+const VER = new URL(import.meta.url).searchParams.get('v') ?? ''
 const AX = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) }
 // 腳趾（toeL0a → toeL0b …，Blender 自動找的）：彎曲軸 = 腳趾方向 × 往下，繞它正轉 = 趾尖往下勾
 function toesOf(r, sd) {
@@ -481,7 +483,9 @@ function groundTripo(env, cfg) {
     if (cfg.bob) {
       const A = cfg.bob, TH = cfg.thrustT ?? 0.13
       if (c.thrust < TH) { c.thrust += dt; const e = Math.min(1, c.thrust / TH); c.hb = lerp(c.hb0, A, e * e * e * (e * (e * 6 - 15) + 10)) }
-      else c.hb = moving ? Math.max(-A, c.hb - (w.v / k) * dt) : damp(c.hb, 0, 5, dt)
+      // 真的鳥頭在空中完全不動，但斑鳩腳短、每步只走 5 公分，從網頁的鏡頭距離看不出來，
+      // 所以 bobGain 倍誇張：停頭時頭相對身體退得比身體走得快（在世界裡會微微往後飄）
+      else c.hb = moving ? Math.max(-2 * A, c.hb - (cfg.bobGain ?? 1) * (w.v / k) * dt) : damp(c.hb, 0, 5, dt)
       const hd = r.bones.head
       // 頭推到前面時稍微低一點（影片裡脖子往前伸時頭會下沉）
       hd.position.add(FWD.clone().multiplyScalar(-c.hb).add(_d.set(0, -0.3 * Math.max(0, c.hb), 0)).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
@@ -504,7 +508,7 @@ function malayanHeron(env) {
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
-  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.035, shadow: 0.18,
+  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.05, bobGain: 1.9, shadow: 0.18,
     walk: { radius: 1.2, speed: 0.15 }, stride: 0.11, swingT: 0.16, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
