@@ -407,6 +407,35 @@ function groundTripo(env, cfg) {
     // 腳趾：空中收起來、快落地時張開，踩地時平貼
     curlToes(r, L.toes, sw ? 0.9 * Math.sin(Math.PI * Math.min(1, sw / 0.85)) - 0.15 * ss(sw, 0.8, 1) : 0)
   }
+  // 蚯蚓：每格用目前嘴尖的位置重排一條管子。拔的時候一端還在土裡、被拉長；拔出來後掛在嘴上扭，吞的時候越來越短
+  let wormMesh = null, wormOn = false, caught = false
+  const anchor = V(), _tip = V(), wormMat = new THREE.MeshStandardMaterial({ color: 0xb8675c, roughness: 0.45, emissive: 0x2a0d08 })
+  const worm = (n, kk, t) => {
+    if (n !== 'worm' || kk < 0.18) { wormOn = false; if (wormMesh) wormMesh.visible = false; return }
+    const tip = r.bones.head.localToWorld(_tip.set(0, cfg.bill, 0))
+    if (!wormOn) { wormOn = true; caught = Math.random() < 0.75; anchor.set(tip.x, 0.004, tip.z) }
+    if (!caught || kk > 0.97) { if (wormMesh) wormMesh.visible = false; return }
+    const pts = [], N = 12, L = 0.15
+    const release = ss(kk, 0.53, 0.58), swallow = ss(kk, 0.75, 0.97)
+    // 露出來的那段最長 L：拉得比 L 遠，土裡那端就被拔起來跟著走
+    const dir = V().subVectors(anchor, tip), dl = dir.length()
+    const end = dl > L ? tip.clone().addScaledVector(dir, L / dl) : anchor.clone()
+    end.y = Math.max(end.y, 0.004)
+    for (let i = 0; i <= N; i++) {
+      const u = i / N
+      // 還連著土：從地面拉到嘴尖，中間有點下垂、扭來扭去掙扎
+      const a = V().lerpVectors(end, tip, u), wob = Math.sin(Math.PI * u)
+      a.y -= wob * 0.012; a.x += Math.sin(u * 8 + t * 18) * 0.009 * wob; a.z += Math.cos(u * 7 + t * 15) * 0.007 * wob
+      // 拔出來了：從嘴尖往下垂、左右扭；吞的時候長度縮短
+      const len = L * (1 - swallow) * u
+      const b = V(tip.x + Math.sin(u * 5 + t * 9) * 0.035 * u, tip.y - len, tip.z + Math.cos(u * 4 + t * 7) * 0.025 * u)
+      pts.push(a.lerp(b, release))
+    }
+    if (!wormMesh) { wormMesh = new THREE.Mesh(new THREE.BufferGeometry(), wormMat); wormMesh.frustumCulled = false; root.parent.add(wormMesh) }
+    wormMesh.visible = true
+    wormMesh.geometry.dispose()
+    wormMesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => root.parent.worldToLocal(p))), 18, 0.0065, 5)
+  }
   const update = (t, dt) => {
     acts.tick(dt)
     const d = w.update(dt)
@@ -422,12 +451,23 @@ function groundTripo(env, cfg) {
       else { lean = 0.1; neck = 0.1; head = 0.1; reach = 0.4; rate = 6 }
     } else if (n === 'walk' || n === 'turn') { lean = 0.15; neck = 0.2; head = -0.15; reach = 0.6 }
     else if (n === 'look') { neck = -0.25; head = 0.2; reach = 1.05 }   // 警戒：脖子往上伸直
+    else if (n === 'worm') {
+      // 抓蚯蚓：瞄準 → 戳進草裡 → 分三下把蚯蚓拔出來 → 叼著甩一甩 → 嘴朝上吞下去
+      if (kk < 0.12) { lean = 0.4; neck = 0.6; head = -0.4; reach = 0.6 }
+      else if (kk < 0.2) { lean = 0.75; neck = 1.15; head = -0.2; reach = 1.2; rate = 25 }
+      else if (kk < 0.55) {
+        const pp = (kk - 0.2) / 0.35 * 3, pull = (Math.floor(pp) + ss(pp % 1, 0, 0.35)) / 3
+        lean = 0.75 - 0.3 * pull; neck = 1.1 - 0.45 * pull; head = -0.2 + 0.05 * pull; reach = 1.2 - 0.25 * pull; rate = 18
+      } else if (kk < 0.75) { lean = 0.2; neck = 0.05; head = -0.05; reach = 0.85; rate = 8 }
+      else { lean = 0.05; neck = -0.35; head = -0.6 + 0.08 * Math.sin(t * 9); reach = 0.9; rate = 7 }
+    }
     c.lean = damp(c.lean, lean, rate, dt); c.neck = damp(c.neck, neck, rate, dt); c.head = damp(c.head, head, rate, dt)
     c.reach = damp(c.reach, reach * (cfg.reach ?? 0), rate, dt)
     if (n === 'look' || n === 'stand') glance.update(dt)
     c.yaw = damp(c.yaw, n === 'look' || n === 'stand' ? glance.yaw * (n === 'look' ? 1 : 0.4) : 0, 10, dt)
     // 盯地面時脖子左右慢慢晃（頭保持對著同一點，用視差判斷獵物位置），晃一陣停一陣
-    c.sway = damp(c.sway, n === 'stare' && cfg.sway ? 0.35 * ss(Math.sin(t * 0.45), -0.3, 0.3) * Math.sin(t * 3.4) : 0, 8, dt)
+    c.sway = damp(c.sway, n === 'stare' && cfg.sway ? 0.35 * ss(Math.sin(t * 0.45), -0.3, 0.3) * Math.sin(t * 3.4)
+      : n === 'worm' && kk > 0.55 && kk < 0.75 ? 0.3 * Math.sin(t * 13) : 0, n === 'worm' ? 20 : 8, dt)   // 叼著蚯蚓時頭左右甩
     const ph = c.phase * Math.PI * 2
     r.reset()
     // 走路時重心移到踩地的那隻腳（身體側傾）、每一步前後點一下；站著時慢慢呼吸
@@ -490,6 +530,7 @@ function groundTripo(env, cfg) {
       // 頭推到前面時稍微低一點（影片裡脖子往前伸時頭會下沉）
       hd.position.add(FWD.clone().multiplyScalar(-c.hb).add(_d.set(0, -0.3 * Math.max(0, c.hb), 0)).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
     }
+    if (cfg.worm) worm(n, kk, t)
     // 涉水的鷺鷥啄下去、嘴碰到水面時激起一圈大水波
     if (cfg.wade) {
       if (n !== 'strike') c.splash = false
@@ -509,11 +550,11 @@ function nightHeron(env) {
     walk: { radius: 0.6, speed: 0.18, avoid: (x, z) => z < -0.4 }, swingT: 0.36, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
     acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] } })
 }
-// 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
+// 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、啄進草裡拔蚯蚓吞下去
 function malayanHeron(env) {
-  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1,
+  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1, worm: true, bill: 0.225,
     walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.38, lift: 0, knee: [1.2, 1.9], focusY: 0.5,
-    acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
+    acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], worm: [1.4, 3.3, 3.9], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 // 斑鳩常一對一起在地上走
