@@ -1,7 +1,7 @@
 // 輔大的動物鄰居：往下捲，鏡頭依序飛到每種動物出沒的地點
 import * as THREE from 'three'
 import { buildCampus, WATER_Y, useRenderer } from './campus.js'
-import { placeAnimal } from './models.js'
+import { placeAnimal, loadAnimalModels } from './models.js'
 import { buildDetail } from './foliage.js'
 import { ANIMALS } from './animals.js'
 
@@ -57,7 +57,9 @@ story.innerHTML = [
     <div class="grid">${ANIMALS.map((a, i) => `<button data-go="${i + 1}">${esc(a.name)}</button>`).join('')}</div>
     <div class="small">地點為大概的出沒範圍，動物會移動，不一定每次都看得到。<br>
     觀察時請保持距離，不追趕、不餵食。<br>
-    地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+    地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors<br>
+    松鼠模型：<a href="https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8" target="_blank" rel="noopener">Eastern gray squirrel</a> by faerbogdan99（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>，已改毛色）<br>
+    烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）</div>
   </div></section>`,
 ].join('')
 const steps = [...story.querySelectorAll('.step')]
@@ -80,7 +82,7 @@ let shots = [], animals = [], pins = [], ready = false, detail = null
 
 async function init() {
   useRenderer(renderer)
-  const campus = await buildCampus(scene)
+  const [campus] = await Promise.all([buildCampus(scene), loadAnimalModels()])
   animals = ANIMALS.map((def) => {
     const a = placeAnimal(def, WATER_Y)
     scene.add(a.group)
