@@ -2,7 +2,7 @@
 import * as THREE from 'three'
 import { buildCampus, WATER_Y, useRenderer } from './campus.js'
 import { placeAnimal, loadAnimalModels } from './models.js'
-import { buildDetail } from './foliage.js'
+import { buildDetail, foliageNear } from './foliage.js'
 import { ANIMALS } from './animals.js'
 
 const canvas = document.getElementById('scene')
@@ -102,7 +102,7 @@ async function init() {
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
   makePins(campus)
-  Object.assign(window.__fju, { campus, animals })
+  Object.assign(window.__fju, { campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
   ready = true
   resize()
   document.getElementById('loading').classList.add('done')
@@ -186,12 +186,15 @@ const camPos = new THREE.Vector3(), camTarget = new THREE.Vector3()
 function shotAt(p) {
   const i = Math.min(shots.length - 2, Math.floor(p)), f = ease(p - i)
   const A = shots[i], B = shots[i + 1]
-  camPos.lerpVectors(A.pos, B.pos, f)
-  camTarget.lerpVectors(A.target, B.target, f)
-  // 兩個近景之間先拉高再降下，像飛過去
-  const lift = Math.sin(Math.PI * f) * Math.min(160, A.pos.distanceTo(B.pos) * 0.45)
-  camPos.y += lift
-  camTarget.y += lift * 0.3
+  // 兩個近景之間：先往上升到樹冠上方、再水平飛過去、最後降下來。
+  // 以前是邊飛邊升，鏡頭會低空穿過樹冠，整個畫面一下暗一下亮（閃圖）。
+  const H = THREE.MathUtils.clamp(A.pos.distanceTo(B.pos) * 0.45, 30, 160)
+  const up = THREE.MathUtils.smoothstep(f, 0, 0.3) * (1 - THREE.MathUtils.smoothstep(f, 0.7, 1))
+  const fh = THREE.MathUtils.smoothstep(f, 0.2, 0.8)
+  camPos.lerpVectors(A.pos, B.pos, fh)
+  camTarget.lerpVectors(A.target, B.target, fh)
+  camPos.y += H * up
+  camTarget.y += H * up * 0.3
   return Math.round(p)
 }
 
@@ -232,6 +235,8 @@ function frame() {
   if (!window.__fju.pause) for (const a of animals) if (a.target.distanceTo(camera.position) < 200) a.update(t, dt)
   const active = nearest >= 1 && nearest <= animals.length ? nearest - 1 : -1
   detail?.update(camera.position, t)
+  // 飛行途中（不在任何一站上）樹葉溶掉的範圍放大
+  foliageNear.value = THREE.MathUtils.lerp(2.8, 9, THREE.MathUtils.smoothstep(Math.abs(p - nearest), 0.02, 0.12))
   updatePins(active)
   ;[...dots.children].forEach((d, i) => d.classList.toggle('on', i === nearest))
   renderer.render(scene, camera)

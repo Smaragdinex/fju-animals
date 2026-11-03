@@ -4,6 +4,8 @@ import * as THREE from 'three'
 import { CORE } from './ground.js'
 
 export const foliageTime = { value: 0 }
+// 鏡頭附近多遠以內的樹葉要溶掉：停在動物前面時小（樹冠才不會破洞），飛行途中大（不會整個畫面被葉子蓋住）
+export const foliageNear = { value: 2.8 }
 const hashR = (() => { let s = 11; return () => ((s = (s * 16807) % 2147483647) / 2147483647) })()
 
 // 樹冠的起伏（樹冠幾何和葉片都照這個長，葉片才會貼在樹冠表面）
@@ -29,10 +31,20 @@ const WORLD_VARY = (sh) => {
         fw = instanceMatrix * fw;
       #endif
       vFw = (modelMatrix * fw).xyz;`)
-  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vFw;' + NOISE)
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vFw;\nuniform float foliageNear;' + NOISE)
+  sh.uniforms.foliageNear = foliageNear
 }
 
 /* ---------- 樹冠：一簇簇明暗、亮的葉尖偏黃 ---------- */
+// 鏡頭附近的樹葉用網點慢慢溶掉：鏡頭從樹冠旁邊或中間升上去時，畫面才不會一下被葉子整個蓋住（閃圖）
+const NEAR_FADE = `#include <clipping_planes_fragment>
+      {
+        float camD = length(vViewPosition);
+        float keep = smoothstep(foliageNear * 0.3, foliageNear, camD);
+        vec2 sp = floor(gl_FragCoord.xy);
+        float dither = fract(dot(sp, vec2(0.5, 0.25)) + fract(sp.y * 0.5) * 0.5 + 0.0625);
+        if (keep < 1.0 && dither > keep) discard;
+      }`
 const CLUMP = `#include <color_fragment>
       float c1 = fNoise(vFw * 1.2), c2 = fNoise(vFw * 3.6 + 7.0), c3 = fNoise(vFw * 12.0);
       float clump = smoothstep(0.25, 0.8, c1 * 0.55 + c2 * 0.45);
@@ -41,7 +53,7 @@ const CLUMP = `#include <color_fragment>
 export function leafify(m) {
   m.onBeforeCompile = (sh) => {
     WORLD_VARY(sh)
-    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', CLUMP)
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', CLUMP).replace('#include <clipping_planes_fragment>', NEAR_FADE)
   }
   m.customProgramCacheKey = () => 'leafify'
   return m
@@ -143,7 +155,7 @@ export function leafCardMaterial(color = 0xffffff) {
   })
   m.onBeforeCompile = (sh) => {
     WORLD_VARY(sh)
-    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', CLUMP)
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', CLUMP).replace('#include <clipping_planes_fragment>', NEAR_FADE)
     sh.uniforms.uTime = foliageTime
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nuniform float uTime;')
