@@ -353,7 +353,7 @@ function groundTripo(env, cfg) {
     if (n === 'turn') w.want = w.h + a.sgn * rnd(0.6, 2)
   })
   const glance = new Glance([0.6, 1.8], 0.7, 0.25)
-  const c = { lean: 0, neck: 0, head: 0, yaw: 0, phase: 0, amp: 0, sway: 0, reach: 0, roll: 0 }, focus = V()
+  const c = { lean: 0, neck: 0, head: 0, yaw: 0, phase: 0, amp: 0, sway: 0, reach: 0, roll: 0, hb: 0, hb0: 0, thrust: 9, prevPhase: 0 }, focus = V()
   // 腳：踩在地上的那一點固定不動（不會滑），離身體太遠就抬起來跨到前面；一次只抬一隻。
   // 大腿、小腿用兩節 IK 對到腳踝目標，腳掌保持原本貼地的角度。全部在模型座標的側面（FWD、y）平面裡算
   const N = FWD.clone().cross(AX.y).normalize()   // 繞 N 轉 = 在側面平面裡從 FWD 轉向上
@@ -409,7 +409,7 @@ function groundTripo(env, cfg) {
     acts.tick(dt)
     const d = w.update(dt)
     if ((acts.name === 'walk' || acts.name === 'turn') && !w.busy) acts.next()
-    c.phase += d / (cfg.step ?? 0.16); c.amp = damp(c.amp, w.busy ? 1 : 0, 6, dt)
+    c.phase += d / stride; c.amp = damp(c.amp, w.busy ? 1 : 0, 6, dt)
     const n = acts.name, kk = acts.k
     // 目標姿勢：lean 身體前傾、neck 脖子往前下伸、head 頭抬回水平、reach 脖子伸長（cfg.reach 倍）
     let lean = 0, neck = 0, head = 0, reach = 0.45, rate = 4
@@ -427,8 +427,6 @@ function groundTripo(env, cfg) {
     // 盯地面時脖子左右慢慢晃（頭保持對著同一點，用視差判斷獵物位置），晃一陣停一陣
     c.sway = damp(c.sway, n === 'stare' && cfg.sway ? 0.35 * ss(Math.sin(t * 0.45), -0.3, 0.3) * Math.sin(t * 3.4) : 0, 8, dt)
     const ph = c.phase * Math.PI * 2
-    // 鳩鴿類走路時頭一前一後（每一步一次）
-    const bob = (cfg.bob ?? 0) * c.amp * Math.sin(ph * 2)
     r.reset()
     // 走路時重心移到踩地的那隻腳（身體側傾）、每一步前後點一下；站著時慢慢呼吸
     c.roll = damp(c.roll, 0.05 * ((legs[0].t < 1) - (legs[1].t < 1)), 5, dt)
@@ -437,16 +435,16 @@ function groundTripo(env, cfg) {
       // 身體兩節分攤前傾，脖子三節分攤彎曲和伸長，頭整顆不變形
       r.turn('body', LAT, -c.lean * 0.6 + pitch + 0.015 * Math.sin(t * 1.3)); r.turn('body', FWD, roll)
       r.turn('chest', LAT, -c.lean * 0.4 + breath - pitch * 0.5); r.turn('chest', FWD, -roll * 0.4)
-      const nb = -c.neck * 0.8 - bob - pitch * 0.5, ny = c.yaw * 0.5 + c.sway
+      const nb = -c.neck * 0.8 - pitch * 0.5, ny = c.yaw * 0.5 + c.sway
       for (const [b, f] of [['neck', 0.45], ['neck2', 0.35], ['neck3', 0.2]]) { r.turn(b, LAT, nb * f); r.turn(b, AX.y, ny * f) }
       r.turn('neck3', FWD, -roll * 0.6)
       for (const b of ['neck2', 'neck3', 'head']) r.stretch(b, c.reach)
     } else {
       r.turn('body', LAT, -c.lean + 0.02 * Math.sin(t * 1.3)); r.turn('body', FWD, roll)
-      r.turn('neck', LAT, -c.neck * 0.8 - bob); r.turn('neck', AX.y, c.yaw * 0.5 + c.sway)
+      r.turn('neck', LAT, -c.neck * 0.8); r.turn('neck', AX.y, c.yaw * 0.5 + c.sway)
       r.stretch('head', c.reach)
     }
-    r.turn('head', LAT, -c.neck * 0.3 - c.head + bob * 1.2); r.turn('head', AX.y, c.yaw * 0.6 - c.sway * 0.95)
+    r.turn('head', LAT, -c.neck * 0.3 - c.head); r.turn('head', AX.y, c.yaw * 0.6 - c.sway * 0.95)
     // 尾巴：前傾時翹起、走路時跟著步伐上下左右擺
     r.turn('tail', LAT, 0.1 * c.lean + 0.06 * Math.sin(ph * 2 + 1) * c.amp); r.turn('tail', AX.y, 0.08 * Math.sin(ph) * c.amp)
     for (const [wg, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(wg, AX.y, sg * (0.02 * breath / 0.025 + 0.04 * Math.abs(roll) / 0.07))
@@ -455,7 +453,10 @@ function groundTripo(env, cfg) {
     root.position.set(w.p.x, 0.012 * cfg.H * up, w.p.y); root.rotation.y = w.h
     root.updateWorldMatrix(true, true)
     const fwd = _t.set(Math.sin(w.h), 0, Math.cos(w.h)).clone(), moving = c.amp > 0.3
-    for (const L of legs) {
+    // 走路時左右腳照節拍輪流跨：每走 stride 公尺一個循環，左腳在 0、右腳在半圈，步伐才平均
+    const beat = legs.map((L, i) => moving && Math.floor(c.phase + i * 0.5) > Math.floor(c.prevPhase + i * 0.5))
+    c.prevPhase = c.phase
+    legs.forEach((L, li) => {
       const home = r.model.localToWorld(L.rest.clone()); home.y -= root.position.y
       if (!L.plant) { L.plant = home.clone(); L.pos.copy(home) }
       const other = legs.find((o) => o !== L)
@@ -468,11 +469,21 @@ function groundTripo(env, cfg) {
         L.pos.copy(L.plant)
         // 腳落後太多（走路）或離站姿位置太遠（停下、轉身）就跨一步；另一隻腳在空中時不跨
         const far = Math.hypot(L.plant.x - home.x, L.plant.z - home.z)
-        if (other.t >= 1 && far > (moving ? stride * 0.5 : 0.035 * cfg.H)) {
+        if (other.t >= 1 && (moving ? beat[li] || far > stride * 1.2 : far > 0.035 * cfg.H)) {
           L.from.copy(L.plant); L.to.copy(home).addScaledVector(fwd, moving ? stride * 0.5 : 0); L.t = 0
+          if (moving) { c.thrust = 0; c.hb0 = c.hb }
         }
       }
       ik(L, L.pos)
+    })
+    // 鳩鴿類走路點頭：其實是頭前後移動，不是轉。每跨一步，頭很快往前推（thrust），
+    // 之後身體往前走、頭停在空中原地不動（hold），所以相對身體慢慢往後退，下一步再推
+    if (cfg.bob) {
+      const A = cfg.bob, TH = 0.15
+      if (c.thrust < TH) { c.thrust += dt; const e = Math.min(1, c.thrust / TH); c.hb = lerp(c.hb0, A, e * e * e * (e * (e * 6 - 15) + 10)) }
+      else c.hb = moving ? Math.max(-A, c.hb - (w.v / k) * dt) : damp(c.hb, 0, 5, dt)
+      const hd = r.bones.head
+      hd.position.add(FWD.clone().multiplyScalar(-c.hb).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
     }
     focus.set(w.p.x, cfg.focusY ?? 0.6, w.p.y)
   }
@@ -481,19 +492,19 @@ function groundTripo(env, cfg) {
 // 夜鷺（ChatGPT 參考圖 → Tripo，跟黑冠麻鷺一樣綁法：脖子三節、頭剛性、腳趾）：站著等、慢慢走、很快啄下去
 function nightHeron(env) {
   return groundTripo(env, { name: 'night-heron-rig', H: 0.8, h0: 0.83, rotY: Math.PI / 2, lat: V(0, 0, -1), reach: 0.8, shadow: 0.3,
-    walk: { radius: 0.7, speed: 0.18 }, swingT: 0.42, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
+    walk: { radius: 0.7, speed: 0.18 }, swingT: 0.36, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
     acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] } })
 }
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
 function malayanHeron(env) {
   return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1,
-    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.45, lift: 0, knee: [1.2, 1.9], focusY: 0.5,
+    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.38, lift: 0, knee: [1.2, 1.9], focusY: 0.5,
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
-  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.25, shadow: 0.18,
-    walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.18, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
+  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.045, shadow: 0.18,
+    walk: { radius: 1.2, speed: 0.16 }, step: 0.09, swingT: 0.18, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
 
