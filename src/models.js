@@ -463,8 +463,56 @@ function perchTripo(env, cfg) {
   }
   return { obj: root, focus, update, hopper: hp, acts }
 }
-// 五色鳥：照片（CC0）用 Tripo 生成，頭朝 -x 偏 -z、身體斜站
-function barbet(env) { return perchTripo(env, { name: 'barbet-rig', k: 0.62, rotY: 2.07, lat: V(-0.47, 0, 0.88), feet: [0.08, 0.545, 0.03] }) }
+/* ---------- 停枝的鳥：用模型自己的腳（骨頭 thigh → shin → foot） ---------- */
+// 跳的節奏和 perchTripo 一樣，只是腳不另外做：蹲低時大腿往前、小腿往後折、身體跟著降低，空中把腳收起來。
+// cfg：name、k、rotY、lat（繞它正轉 = 抬頭、腳往前）、foot 腳底在模型裡的高度、drop 蹲到底時身體降多少（模型單位）
+function perchRigged(env, cfg) {
+  const r = rigged(cfg.name)
+  const k = cfg.k, LAT = cfg.lat
+  const root = new THREE.Group(), lift = new THREE.Group(), inner = new THREE.Group()
+  r.model.scale.setScalar(k); r.model.position.y = -cfg.foot * k
+  inner.add(r.model); inner.rotation.y = cfg.rotY
+  lift.add(inner); root.add(lift)
+  const hp = new Hopper(env, { rest: [2, 7], dur: 0.32, ...cfg.hopper })
+  const gl = new Glance([0.5, 1.6], 0.8, 0.3)
+  const acts = new Acts({ idle: [4, 2, 5], call: [3, 2, 4], preen: [0.8, 1.5, 3] })
+  const c = { yaw: 0, pitch: 0, call: 0 }, focus = V()
+  const update = (t, dt) => {
+    acts.tick(dt)
+    if (acts.name !== 'idle') hp.wait = Math.max(hp.wait, 0.3)
+    hp.update(dt); gl.update(dt)
+    const k01 = hp.hopping ? hp.k : 1
+    const air = hp.hopping ? Math.sin(Math.PI * k01) : 0
+    const push = hp.hopping ? Math.max(0, 1 - k01 / 0.25) : 0
+    const land = hp.hopping ? 0 : Math.exp(-hp.landed * 7) * (1 + 0.4 * Math.sin(hp.landed * 22))
+    const crouch = clamp(0.75 * hp.pre + 0.6 * land, 0, 1)
+    c.yaw = damp(c.yaw, acts.name === 'preen' ? 1.2 * acts.sgn : gl.yaw, acts.name === 'preen' ? 6 : 18, dt)
+    c.pitch = damp(c.pitch, acts.name === 'preen' ? -0.5 : -gl.hp, 18, dt)
+    c.call = damp(c.call, acts.name === 'call' ? 1 : 0, 6, dt)
+    const beat = c.call * Math.max(0, Math.sin(t * (cfg.beat ?? 9)))
+    r.reset()
+    // 身體蹲低時前傾、起跳時伸直；頭保持水平
+    r.turn('body', LAT, -0.3 * crouch + 0.1 * push - 0.06 * air + 0.03 * beat)
+    r.turn('neck', AX.y, c.yaw * 0.45); r.turn('neck', LAT, c.pitch * 0.4 - 0.12 * beat + 0.15 * crouch)
+    r.turn('head', AX.y, c.yaw * 0.55); r.turn('head', LAT, c.pitch * 0.6 - 0.18 * beat + 0.15 * crouch)
+    r.turn('tail', LAT, -0.45 * land + 0.3 * hp.pre - 0.2 * air)
+    for (const [w, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(w, AX.y, sg * (0.6 * air + 0.15 * push))
+    // 腳：蹲 → 大腿往前、小腿往後折、腳掌壓平；空中 → 整隻腳收到肚子下面
+    const bend = 0.9 * crouch, tuck = 0.8 * air
+    for (const s of ['L', 'R']) {
+      r.turn('thigh' + s, LAT, 0.3 * crouch + bend * 0.6 + tuck * 0.8)
+      r.turn('shin' + s, LAT, -bend * 1.2 - tuck * 1.6)
+      r.turn('foot' + s, LAT, bend * 0.6 + tuck * 1.2)
+    }
+    lift.position.y = -cfg.drop * k * crouch
+    root.position.set(hp.s, env.branch.top(hp.s) + hp.y, 0)
+    root.rotation.y = hp.h
+    focus.set(hp.s, 0.3, 0)
+  }
+  return { obj: root, focus, update, hopper: hp, acts }
+}
+// 五色鳥：ChatGPT 參考圖 → Tripo，正側面頭朝 -x；腳是模型自己生成的，綁了 thigh → shin → foot
+function barbet(env) { return perchRigged(env, { name: 'barbet-rig', k: 0.6, rotY: Math.PI / 2, lat: V(0, 0, -1), foot: 0.01, drop: 0.05, beat: 9 }) }
 // 白頭翁：ChatGPT 參考圖 → Tripo，正側面頭朝 -x
 // 綠繡眼常常幾隻一起：三隻在同一根枝上跳，彼此不擠在一起
 function whiteeye(env) {

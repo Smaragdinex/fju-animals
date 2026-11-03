@@ -49,8 +49,8 @@ elif kind in ('bulbul', 'whiteeye', 'treepie'):
          'tail': ((q['tail0'][0], q['tail0'][1], 0), (q['tailE'][0], q['tailE'][1], 0), 'body', 0.6)}
     for s, n in ((1, 'L'), (-1, 'R')):
         B['wing' + n] = ((q['wing0'][0], q['wing0'][1], s * q['wz']), (q['wingE'][0], q['wingE'][1], s * q['wz']), 'body', 0.35)
-elif kind in ('dove', 'heron'):
-    # 地上走的鳥（Tripo 生成，頭朝 -x）：保留生成的腳，綁 thigh → shin → foot。點位從命令列 JSON 傳入。
+elif kind in ('dove', 'heron', 'barbet2'):
+    # 保留生成腳的鳥（Tripo 生成，頭朝 -x；五色鳥第二版也是）：保留生成的腳，綁 thigh → shin → foot。點位從命令列 JSON 傳入。
     q = EXTRA[kind]
     p3 = lambda xy, z=0: (xy[0], xy[1], z)
     B = {'body': (p3(q['hip']), p3(q['chest']), None, 1.0),

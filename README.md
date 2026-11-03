@@ -41,7 +41,7 @@ python3 fju-animals/data/convert.py
   - 游泳的烏龜：[Red-eared Slider](https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62) by ffish.asia / floraZia.com，CC0
   - 夜鷺：[夜鷺](https://sketchfab.com/3d-models/e2d5eb47994c442086c92a83c60ef303) by kangsirmemes，CC BY 4.0（要標作者，網頁結尾已標示）
   - 斯文豪氏攀蜥：用同屬的 [Sakishima Tree Lizard](https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10) by ffish.asia / floraZia.com，CC0
-  - 五色鳥：用 [Tripo AI](https://www.tripo3d.ai/) 由照片生成（照片 [Taiwan barbet](https://commons.wikimedia.org/wiki/File:Taiwan_barbet.jpg) by longan Jiang，CC0）。Tripo 會連腳下的枯枝一起做，用 `tools/cut-barbet.py` 切掉，再減到 4 萬面、`tools/rig-distance.py ... barbet` 綁骨架
+  - 五色鳥：參考圖以 ChatGPT 生成（側面、頭朝左、腳露出來、白底），再以 [Tripo AI](https://www.tripo3d.ai/) 轉成 3D。腳用模型自己生成的，`tools/shrink-model.py` 減到 4 萬面後用 `tools/rig-distance.py ... barbet2` 綁骨架（含 thigh → shin → foot），點位在 `tools/bird-points.json`
   - 黑冠麻鷺、白頭翁、綠繡眼、珠頸斑鳩、樹鵲：在同一個 ChatGPT 對話裡生成參考圖（下面的規格），再用 Tripo AI 轉成 3D。原圖在 `models/raw/ref/`（不進 git）
     - 參考圖規格（第一張完整寫、後面說「同樣規格」再換物種）：寫實照片風格、羽色照真實物種；全身正側面、頭朝左、平視不透視；翅膀收好；兩隻腳完整露出、分開站在平面上，**不要樹枝**；純白背景、無陰影、無文字；只畫一隻、置中、約佔畫面 70%；並說明「這是要給 3D 生成工具 Tripo 轉成 3D 模型、之後在 Blender 綁骨架做動作用」
     - 這樣 Tripo 出來的模型都是頭朝 -x、左右對稱，點位好量。停枝的鳥用 `tools/cut-below.py` 切掉腳（改用程式的 IK 腳），地上走的鳥保留腳、綁 thigh → shin → foot；綁骨架都用 `tools/rig-distance.py`（點位和切腳高度存在 `tools/bird-points.json`；白頭翁的點位寫在 rig-distance.py 裡）
