@@ -37,7 +37,7 @@ const CLUMP = `#include <color_fragment>
       float c1 = fNoise(vFw * 1.2), c2 = fNoise(vFw * 3.6 + 7.0), c3 = fNoise(vFw * 12.0);
       float clump = smoothstep(0.25, 0.8, c1 * 0.55 + c2 * 0.45);
       diffuseColor.rgb *= 0.58 + 0.55 * clump + 0.25 * (c3 - 0.5);
-      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.1, 1.06, 0.8), clump * c3 * 0.6);`
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.04, 0.88), clump * c3 * 0.35);`
 export function leafify(m) {
   m.onBeforeCompile = (sh) => {
     WORLD_VARY(sh)
@@ -61,36 +61,31 @@ export function barkify(m) {
   return m
 }
 
-/* ---------- 葉片貼圖：一張圖上畫十幾片葉子 ---------- */
+/* ---------- 葉片貼圖：一團密密的葉簇，邊緣參差 ---------- */
+// 顏色接近白色、只帶明暗：乘上樹冠本身的顏色後和樹冠一致，只多了葉子的形狀和不規則的輪廓
 let _leafTex
 function leafTexture() {
   if (_leafTex) return _leafTex
   const N = 256, cv = document.createElement('canvas')
   cv.width = cv.height = N
   const c = cv.getContext('2d')
-  const leaf = (x, y, a, L, W, tone) => {
+  const leaf = (x, y, a, L, W, fill) => {
     c.save(); c.translate(x, y); c.rotate(a)
     c.beginPath(); c.moveTo(0, 0)
     c.bezierCurveTo(W, L * 0.25, W * 0.8, L * 0.75, 0, L)
     c.bezierCurveTo(-W * 0.8, L * 0.75, -W, L * 0.25, 0, 0)
-    const g = c.createLinearGradient(-W, 0, W, 0)
-    g.addColorStop(0, `hsl(${92 + tone * 22}, 50%, ${50 + tone * 14}%)`)
-    g.addColorStop(1, `hsl(${98 + tone * 22}, 45%, ${62 + tone * 12}%)`)
-    c.fillStyle = g; c.fill()
-    c.strokeStyle = `hsla(100, 35%, ${40 + tone * 10}%, 0.6)`; c.lineWidth = 1.2
-    c.beginPath(); c.moveTo(0, 0); c.lineTo(0, L * 0.92); c.stroke()
+    c.fillStyle = fill; c.fill()
     c.restore()
   }
-  // 從中心附近幾根小枝往外長
-  for (let t = 0; t < 8; t++) {
-    const a0 = (t / 8) * Math.PI * 2 + hashR()
-    for (let k = 0; k < 5; k++) {
-      const d = 12 + k * 21 + hashR() * 8
-      const x = N / 2 + Math.cos(a0) * d, y = N / 2 + Math.sin(a0) * d
-      const a = a0 - Math.PI / 2 + (hashR() - 0.5) * 1.6
-      leaf(x, y, a, 26 + hashR() * 16, 8 + hashR() * 4, hashR())
-    }
+  const leaves = []
+  for (let i = 0; i < 90; i++) {
+    // 中心密、外圍疏，葉尖朝外
+    const r = N * 0.36 * Math.sqrt(hashR()), t = hashR() * Math.PI * 2
+    leaves.push([N / 2 + Math.cos(t) * r, N / 2 + Math.sin(t) * r, t - Math.PI / 2 + (hashR() - 0.5) * 1.2, 30 + hashR() * 18, 11 + hashR() * 5, hashR()])
   }
+  // 先畫一層暗的當作葉子之間的陰影，再畫亮的葉面
+  for (const [x, y, a, L, W] of leaves) leaf(x + 2, y + 3, a, L, W, 'rgb(120,128,110)')
+  for (const [x, y, a, L, W, t] of leaves) leaf(x, y, a, L * 0.94, W * 0.9, `rgb(${200 + t * 50 | 0},${212 + t * 43 | 0},${185 + t * 50 | 0})`)
   const tex = new THREE.CanvasTexture(cv)
   tex.colorSpace = THREE.SRGBColorSpace
   tex.anisotropy = 4
@@ -99,7 +94,7 @@ function leafTexture() {
 
 /* ---------- 葉片卡：貼在單位樹冠表面的一圈小方片，法線朝外，光影才會跟樹冠一致 ---------- */
 let _cards
-export function leafCardGeometry(n = 280) {
+export function leafCardGeometry(n = 200) {
   if (_cards) return _cards
   const pos = [], nor = [], uv = [], col = [], idx = []
   const d = new THREE.Vector3(), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), cn = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0)
@@ -108,7 +103,7 @@ export function leafCardGeometry(n = 280) {
     const u = (i + 0.5) / n, phi = i * 2.399963 + hashR() * 0.3
     const y = 1 - 2 * u, s = Math.sqrt(1 - y * y)
     d.set(Math.cos(phi) * s, y, Math.sin(phi) * s).normalize()
-    const r = canopyBump(d) * (0.97 + hashR() * 0.13)
+    const r = canopyBump(d) * (0.9 + hashR() * 0.12)
     const c = d.clone().multiplyScalar(r)
     if (c.y < 0) c.y *= 0.75
     // 方片大致朝外，再隨機傾斜
@@ -117,7 +112,7 @@ export function leafCardGeometry(n = 280) {
     t2.crossVectors(cn, t1).normalize()
     const rot = hashR() * Math.PI * 2, cs = Math.cos(rot), sn = Math.sin(rot)
     const a = t1.clone().multiplyScalar(cs).addScaledVector(t2, sn), b = t1.clone().multiplyScalar(-sn).addScaledVector(t2, cs)
-    const S = 0.15 + hashR() * 0.07
+    const S = 0.26 + hashR() * 0.1
     const k = THREE.MathUtils.lerp(0.72, 1.08, THREE.MathUtils.smoothstep(c.y, -0.8, 0.9)) * (0.88 + hashR() * 0.2)
     const base = pos.length / 3
     for (const [sx, sy, uu, vv] of [[-1, -1, 0, 0], [1, -1, 1, 0], [1, 1, 1, 1], [-1, 1, 0, 1]]) {
@@ -158,7 +153,7 @@ export function leafCardMaterial(color = 0xffffff) {
     sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>',
       'float faceDirection = 1.0;\nvec3 normal = normalize( vNormal );\nvec3 nonPerturbedNormal = normal;')
       // 葉子薄，背光面也透一點光，樹冠底下才不會一片黑
-      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\nreflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.1, 0.13, 0.05);')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\nreflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.06, 0.08, 0.03);')
   }
   m.customProgramCacheKey = () => 'leafcard'
   return (_cardMats[color] = m)

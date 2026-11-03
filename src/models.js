@@ -29,7 +29,8 @@ function cr(a, b, c, d, t) {
 }
 // rings：每個截面是 [x, y, z, 半寬, 上半高, 下半高?]，用 Catmull-Rom 內插成平滑的封閉管狀體。
 // paint(out, u, s, c, q)：u 沿脊線 0→1；s 背 +1／腹 -1；c 兩側 ±1；q 是 frame(頂點) 的正規化座標。
-function loft(rings, paint, { seg = 16, sub = 5, up = V(0, 1, 0), grain = 0.06, frame, material = skin } = {}) {
+// displace(u, s, c, p)：沿法線推出的距離（做溝紋、隆起）。另外輸出 uv（u, 繞一圈 0→1）和沿脊線的切線 tang，給毛用。
+function loft(rings, paint, { seg = 16, sub = 5, up = V(0, 1, 0), grain = 0.06, frame, material = skin, displace } = {}) {
   rings = rings.map((r) => (r.length === 5 ? [...r, r[4]] : r))
   const n = rings.length, S = []
   for (let i = 0; i < n - 1; i++) {
@@ -44,18 +45,24 @@ function loft(rings, paint, { seg = 16, sub = 5, up = V(0, 1, 0), grain = 0.06, 
   const len = [0]
   for (let i = 1; i < m; i++) len.push(len[i - 1] + P[i].distanceTo(P[i - 1]))
   const total = len[m - 1] || 1
-  const pos = [], cols = [], idx = [], col = new THREE.Color(), B = V(), v = V(), q = new THREE.Quaternion()
+  const pos = [], cols = [], idx = [], uvs = [], tang = [], usc = [], ucs = [], col = new THREE.Color(), B = V(), v = V(), q = new THREE.Quaternion()
+  let curT = T[0], curV = 0
   const put = (p, u, s, c) => {
-    paint(col, u, s, c, frame ? frame(p) : p)
+    const fp = frame ? frame(p) : p
+    paint(col, u, s, c, fp)
     const g = 1 + grain * (Math.random() * 2 - 1)
     pos.push(p.x, p.y, p.z); cols.push(col.r * g, col.g * g, col.b * g)
+    uvs.push(u, curV); tang.push(curT.x, curT.y, curT.z); ucs.push(u, s, c)
+    if (displace) usc.push([u, s, c, fp.clone()])
   }
   for (let i = 0; i < m; i++) {
     if (i > 0) { q.setFromUnitVectors(T[i - 1], T[i]); N.applyQuaternion(q); N.addScaledVector(T[i], -N.dot(T[i])).normalize() }
     B.crossVectors(T[i], N)
     const [, , , rx, ryt, ryb] = S[i]
+    curT = T[i]
     for (let j = 0; j < seg; j++) {
       const ang = (j / seg) * Math.PI * 2, c = Math.cos(ang), s = Math.sin(ang)
+      curV = Math.abs(1 - 2 * j / seg) * 0.5   // 對稱展開，接縫那一條才不會跳回 0
       v.copy(P[i]).addScaledVector(B, rx * c).addScaledVector(N, (s >= 0 ? ryt : ryb) * s)
       put(v, len[i] / total, s, c)
     }
@@ -67,6 +74,7 @@ function loft(rings, paint, { seg = 16, sub = 5, up = V(0, 1, 0), grain = 0.06, 
   // 兩端用一個稍微凸出的頂點封口
   for (const [i, dir] of [[0, -1], [m - 1, 1]]) {
     const k = pos.length / 3, [, , , rx, ryt] = S[i]
+    curT = T[i]; curV = 0
     put(P[i].clone().addScaledVector(T[i], dir * Math.min(rx, ryt) * 0.5), i ? 1 : 0, 0, 0)
     for (let j = 0; j < seg; j++) {
       const a = i * seg + j, b = i * seg + ((j + 1) % seg)
@@ -76,13 +84,137 @@ function loft(rings, paint, { seg = 16, sub = 5, up = V(0, 1, 0), grain = 0.06, 
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3))
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  g.setAttribute('tang', new THREE.Float32BufferAttribute(tang, 3))
+  g.setAttribute('ucs', new THREE.Float32BufferAttribute(ucs, 3))
   g.setIndex(idx)
   g.computeVertexNormals()
+  if (displace) {
+    const pa = g.attributes.position, na = g.attributes.normal
+    usc.forEach(([u, s, c, fp], i) => {
+      const d = displace(u, s, c, fp)
+      pa.setXYZ(i, pa.getX(i) + na.getX(i) * d, pa.getY(i) + na.getY(i) * d, pa.getZ(i) + na.getZ(i) * d)
+    })
+    g.computeVertexNormals()
+  }
   const mesh = new THREE.Mesh(g, material)
   mesh.castShadow = true
   return mesh
 }
 const solid = (c) => (o) => o.copy(c)
+
+/* ---------- 毛 ---------- */
+// 同一個網格沿法線疊好幾層，每層只留下「一根根毛」所在的點，越外層越細越少，輪廓就蓬起來。
+// 毛往 comb 方向（沿脊線，往後或往尾端）倒；顏色是刺鼠色：毛根深、中段一圈淡色、毛尖深。
+function fur(base, { len, layers = 10, dens = [100, 60], comb = -1, band = 0x8c8676, tip = 0x2a241c, bandAmt = 0.5, droop = 0.2, holes = [] }) {
+  const g = new THREE.InstancedBufferGeometry()
+  for (const k of ['position', 'normal', 'color', 'uv', 'tang']) g.setAttribute(k, base.geometry.attributes[k])
+  g.setIndex(base.geometry.index)
+  g.setAttribute('shell', new THREE.InstancedBufferAttribute(new Float32Array(layers).map((_, i) => (i + 1) / layers), 1))
+  g.instanceCount = layers
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })
+  const U = { uLen: { value: len }, uDens: { value: new THREE.Vector2(...dens) }, uComb: { value: comb }, uBand: { value: new THREE.Color(band) }, uTip: { value: new THREE.Color(tip) }, uBandAmt: { value: bandAmt }, uDroop: { value: droop },
+    uHoles: { value: [0, 1].map((i) => holes[i] ? new THREE.Vector4(...holes[i]) : new THREE.Vector4(0, 0, 0, 0)) } }
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U)
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float shell; attribute vec3 tang;
+        uniform float uLen, uComb, uDroop;
+        varying float vShell; varying vec2 vFurUv; varying vec3 vObj;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vShell = shell; vFurUv = uv; vObj = position;
+        float sh2 = shell * shell;
+        transformed += normal * shell * uLen + tang * uComb * sh2 * uLen * 0.9;
+        transformed.y -= sh2 * uLen * uDroop;`)
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform vec2 uDens; uniform vec3 uBand, uTip; uniform float uBandAmt; uniform vec4 uHoles[2];
+        varying float vShell; varying vec2 vFurUv; varying vec3 vObj;
+        float furHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 45758.5453); }`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        vec2 cell = vFurUv * uDens;
+        float h = furHash(floor(cell));
+        float rr = length(fract(cell) - 0.5);
+        if (h < vShell * 0.9 || rr > (1.0 - vShell) * 0.42 + 0.06) discard;
+        // 眼睛周圍不長毛（毛越外層讓得越開）
+        for (int i = 0; i < 2; i++) if (uHoles[i].w > 0.0 && distance(vObj, uHoles[i].xyz) < uHoles[i].w * (1.0 + vShell)) discard;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb *= mix(0.55, 1.05, vShell) * (0.85 + 0.3 * h);
+        float bnd = smoothstep(0.45, 0.6, vShell) * (1.0 - smoothstep(0.78, 0.88, vShell));
+        diffuseColor.rgb = mix(diffuseColor.rgb, uBand, bnd * uBandAmt);
+        diffuseColor.rgb = mix(diffuseColor.rgb, uTip, smoothstep(0.86, 0.97, vShell) * 0.6);`)
+  }
+  m.customProgramCacheKey = () => 'fur'
+  const mesh = new THREE.Mesh(g, m)
+  mesh.frustumCulled = false
+  return mesh
+}
+
+// 圓柱（腳）也長毛：補上顏色和沿軸的切線
+function furLimb(mesh, color, o) {
+  const g = mesh.geometry, n = g.attributes.position.count, c = new THREE.Color(color)
+  g.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: n * 3 }, (_, i) => c.toArray()[i % 3] * (0.9 + Math.random() * 0.2)), 3))
+  g.setAttribute('tang', new THREE.Float32BufferAttribute(Array.from({ length: n * 3 }, (_, i) => (i % 3 === 1 ? -1 : 0)), 3))
+  const f = fur(mesh, { comb: 1, ...o })
+  mesh.add(f)
+  return f
+}
+
+// 一條沿著折線每格重排的管子（松鼠尾巴的芯），radius(u) 決定粗細，wide 讓側面比上下寬（毛往兩側攤開）
+function tube(n, seg, radius, wide = 1, paint = () => new THREE.Color(1, 1, 1)) {
+  const g = new THREE.BufferGeometry(), V3 = (n + 1) * seg + 2
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(V3 * 3), 3))
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(V3 * 3), 3))
+  g.setAttribute('tang', new THREE.BufferAttribute(new Float32Array(V3 * 3), 3))
+  const uv = [], idx = []
+  for (let i = 0; i <= n; i++) for (let j = 0; j < seg; j++) uv.push(i / n, Math.abs(1 - 2 * j / seg) * 0.5)
+  uv.push(0, 0, 1, 0)
+  const cols = []
+  for (let k = 0; k < V3; k++) { const c = paint(uv[k * 2]); const gr = 0.9 + Math.random() * 0.2; cols.push(c.r * gr, c.g * gr, c.b * gr) }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3))
+  for (let i = 0; i < n; i++) for (let j = 0; j < seg; j++) {
+    const a = i * seg + j, b = a + seg, c = i * seg + ((j + 1) % seg), d = c + seg
+    idx.push(a, b, c, c, b, d)
+  }
+  const c0 = (n + 1) * seg, c1 = c0 + 1
+  for (let j = 0; j < seg; j++) { idx.push(c0, j, (j + 1) % seg); idx.push(c1, n * seg + (j + 1) % seg, n * seg + j) }
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  g.setIndex(idx)
+  const P = [], T = [], N = V(), B = V(), q = new THREE.Quaternion(), w = V()
+  for (let i = 0; i <= n; i++) { P.push(V()); T.push(V()) }
+  // pts：控制點（同一個座標系），沿著它們用 Catmull-Rom 取 n+1 個截面
+  g.userData.update = (pts, up) => {
+    const L = pts.length - 1
+    for (let i = 0; i <= n; i++) {
+      const f = (i / n) * L, k = Math.min(L - 1, Math.floor(f)), t = f - k
+      const a = pts[Math.max(0, k - 1)], b = pts[k], c = pts[k + 1], d = pts[Math.min(L, k + 2)]
+      P[i].set(cr(a.x, b.x, c.x, d.x, t), cr(a.y, b.y, c.y, d.y, t), cr(a.z, b.z, c.z, d.z, t))
+    }
+    for (let i = 0; i <= n; i++) T[i].subVectors(P[Math.min(i + 1, n)], P[Math.max(i - 1, 0)]).normalize()
+    N.copy(up).addScaledVector(T[0], -up.dot(T[0])).normalize()
+    const pa = g.attributes.position.array, ta = g.attributes.tang.array
+    for (let i = 0; i <= n; i++) {
+      if (i > 0) { q.setFromUnitVectors(T[i - 1], T[i]); N.applyQuaternion(q); N.addScaledVector(T[i], -N.dot(T[i])).normalize() }
+      B.crossVectors(T[i], N)
+      const r = radius(i / n)
+      for (let j = 0; j < seg; j++) {
+        const an = (j / seg) * Math.PI * 2, o = (i * seg + j) * 3
+        w.copy(P[i]).addScaledVector(B, r * wide * Math.cos(an)).addScaledVector(N, r * Math.sin(an))
+        pa[o] = w.x; pa[o + 1] = w.y; pa[o + 2] = w.z
+        ta[o] = T[i].x; ta[o + 1] = T[i].y; ta[o + 2] = T[i].z
+      }
+    }
+    let o = c0 * 3
+    w.copy(P[0]).addScaledVector(T[0], -radius(0) * 0.5); pa[o] = w.x; pa[o + 1] = w.y; pa[o + 2] = w.z
+    w.copy(P[n]).addScaledVector(T[n], radius(1) * 0.8); o += 3; pa[o] = w.x; pa[o + 1] = w.y; pa[o + 2] = w.z
+    for (const k of [c0, c1]) { const ti = k === c0 ? 0 : n; ta.set([T[ti].x, T[ti].y, T[ti].z], k * 3) }
+    g.attributes.position.needsUpdate = g.attributes.tang.needsUpdate = true
+    g.computeVertexNormals()
+    g.computeBoundingSphere()
+  }
+  return g
+}
 
 // 眼睛：有光澤的虹膜球 + 外側扁平瞳孔；fwd 讓眼睛往前轉一點
 function eye(r, iris, [x, y, z], sx, fwd = 0.3, pupil = 0.55) {
@@ -923,11 +1055,12 @@ function squirrel(env) {
   root.add(body)
   body.add(loft([[0, 0.004, -0.53 * L, R * 0.3, R * 0.3], [0, 0.006, -0.42 * L, R * 0.85, R * 0.88, R * 0.82], [0, 0.004, -0.2 * L, R * 0.95, R, R * 0.9], [0, 0, 0, R * 0.85, R * 0.9, R * 0.82], [0, 0, 0.22 * L, R * 0.78, R * 0.85, R * 0.78], [0, 0.004, 0.4 * L, R * 0.7, R * 0.78, R * 0.72], [0, 0.008, 0.53 * L, R * 0.48, R * 0.52, R * 0.5]],
     (o, u, s, c, p) => { grizzle(o.copy(P.ag), p); o.lerp(P.belly, ss(-s, 0.25, 0.5)) }, { grain: 0.18 }))
+  body.add(fur(body.children[0], { len: 0.0065, layers: 12, dens: [130, 210], band: 0xa59f90, bandAmt: 0.4 }))
   // 大腿肌肉
   const haunches = [1, -1].map((sx) => {
     const m = loft([[0, 0, -0.03, 0.006, 0.01], [0, 0, -0.015, 0.016, 0.026], [0, 0, 0.01, 0.017, 0.028], [0, 0, 0.03, 0.006, 0.01]], (o, u, s, c, p) => { grizzle(o.copy(P.ag), p); o.lerp(P.belly, 0.6 * ss(-s, 0.6, 0.9)) }, { grain: 0.18 })
     m.position.set(sx * 0.024, -0.006, -0.3 * L)
-    body.add(m)
+    body.add(m, fur(m, { len: 0.0065, layers: 10, dens: [55, 170], band: 0xa59f90, bandAmt: 0.4 }))
     return m
   })
   // 頭
@@ -942,23 +1075,42 @@ function squirrel(env) {
       const d = Math.min(...eyes.map((e) => Math.hypot(p.x - e[0], p.y - e[1], p.z - e[2])))
       o.lerp(P.ring, band2(d, 0.005, 0.0085, 0.0015))
     }, { grain: 0.15 }))
+  head.add(fur(head.children[0], { len: 0.0028, layers: 7, dens: [60, 130], band: 0xa59f90, bandAmt: 0.35, holes: eyes.map((e) => [...e, 0.0062]) }))
   eyes.forEach(([x, y, z], i) => head.add(eye(0.0058, 0x120c08, [x, y, z], i ? -1 : 1, 0.15, 0.7)))
+  // 鬍鬚：口鼻兩側各五根，往外往後散開
+  const wv = []
+  for (const sx of [1, -1]) for (let k = 0; k < 5; k++) {
+    const a = -0.35 + k * 0.17, L2 = 0.028 + Math.random() * 0.012
+    wv.push(sx * 0.005, -0.003, 0.05, sx * (0.005 + L2 * Math.cos(a) * 0.9), -0.003 + L2 * Math.sin(a) * 0.5, 0.05 - L2 * 0.35)
+  }
+  const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wv, 3))
+  head.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x1a1612, transparent: true, opacity: 0.7 })))
   for (const sx of [1, -1]) {
     const ear = loft([[0, 0, 0, 0.0065, 0.003], [0, 0.007, 0, 0.0072, 0.0026], [0, 0.013, 0, 0.0045, 0.0016], [0, 0.0155, 0, 0.001, 0.001]], (o, u) => o.copy(P.ag).lerp(P.ag2, u), { up: V(0, 0, -1), seg: 10 })
     ear.position.set(sx * 0.012, 0.022, 0.008); ear.rotation.z = -sx * 0.35
     head.add(ear)
   }
   body.add(head)
-  // 尾巴：一節一節，可以捲、可以甩
-  const tail = [], radii = [0.012, 0.018, 0.023, 0.027, 0.029, 0.029, 0.027, 0.023, 0.017], sl = 0.022
-  let parent = body, tailBase
-  radii.forEach((r, i) => {
+  // 尾巴：骨架是一節一節的關節（可以捲、可以甩），外觀是沿著關節每格重排的一整條管子 + 長毛，
+  // 影片裡的尾巴寬度接近身體，毛往兩側攤開、尾端毛色較深、邊緣一圈霜白
+  const tail = [], sl = 0.022
+  let parent = body
+  for (let i = 0; i < 9; i++) {
     const seg = new THREE.Group()
-    if (i === 0) { seg.position.set(0, 0.012, -0.5 * L); tailBase = seg } else seg.position.z = -sl
-    seg.add(loft([[0, 0, 0.016, r * 0.75, r * 0.75], [0, 0, -sl * 0.2, r, r * 0.95], [0, 0, -sl * 0.8, r, r * 0.95], [0, 0, -sl - 0.016, r * 0.75, r * 0.7]],
-      (o, u, s, c, p) => { grizzle(o.copy(P.ag), p, 220); o.lerp(P.tip, i >= 7 ? 0.6 : 0); o.lerp(P.ring, 0.35 * ss(Math.abs(c), 0.75, 0.95)) }, { grain: 0.25, seg: 12 }))
+    if (i === 0) seg.position.set(0, 0.012, -0.5 * L); else seg.position.z = -sl
     parent.add(seg); tail.push(seg); parent = seg
-  })
+  }
+  const tailEnd = new THREE.Group(); tailEnd.position.z = -sl; parent.add(tailEnd)
+  const tailGeo = tube(40, 16, (u) => 0.008 + 0.009 * Math.sin(Math.PI * Math.min(1, 0.25 + u * 0.9)), 1.35,
+    (u) => tmp.copy(P.ag).lerp(P.ag2, 0.3).lerp(P.tip, 0.5 * ss(u, 0.75, 1)).clone())
+  const tailMesh = new THREE.Mesh(tailGeo, skin)
+  tailMesh.castShadow = true; tailMesh.frustumCulled = false
+  const tailFur = fur(tailMesh, { len: 0.024, layers: 18, dens: [200, 90], comb: 1, band: 0xc9c2b0, bandAmt: 0.75, tip: 0x1e1a15, droop: 0.12 })
+  root.add(tailMesh, tailFur)
+  const tailPts = Array.from({ length: 11 }, () => V())
+  // 坐著吃東西時捧的果實
+  const nut = new THREE.Mesh(SPH, mat(0x7a5a32, 0.6)); nut.scale.set(0.009, 0.008, 0.011); nut.castShadow = true
+  root.add(nut)
   // 腳：前腳手肘往後、後腳膝蓋往前
   const legSpec = [
     { x: 0.02, y: -0.016, z: 0.3 * L, a: 0.03, b: 0.028, ra: 0.0095, rb: 0.0058, bend: 1, off: 0 },
@@ -968,10 +1120,14 @@ function squirrel(env) {
   ]
   const legs = legSpec.map((sp, i) => {
     const l = makeLeg({ ...sp, ca: 0x6c6350, cb: 0x5a5244 })
-    const pw = new THREE.Mesh(SPH, mat(0x3b322a, 0.7))
+    const pw = new THREE.Mesh(SPH, mat(0x4e463a, 0.8))
     if (i < 2) { pw.scale.set(0.006, 0.004, 0.009); pw.position.z = 0.004 } else { pw.scale.set(0.007, 0.004, 0.02); pw.position.z = 0.01 }
     pw.castShadow = true
     l.foot.add(pw); l.ground = 0.004; l.sp = sp
+    // 腳也有毛：上段長一點，下段短
+    const [up, , lo] = [l.hip.children[0], null, l.knee.children[1]]
+    furLimb(up, 0x6c6350, { len: 0.0045, layers: 7, dens: [40, 60], band: 0xa59f90, bandAmt: 0.35 })
+    furLimb(lo, 0x5a5244, { len: 0.0025, layers: 6, dens: [40, 50], band: 0x8a8272, bandAmt: 0.3 })
     root.add(l.hip)
     return l
   })
@@ -990,9 +1146,10 @@ function squirrel(env) {
     if (n === 'turn') st.dir = -st.dir
   })
   const pose = { pitch: 0, lift: 0, hp: 0, yaw: 0 }, H0 = 0.07
-  const tailRest = { run: [0.25, 0.08, 0.05, 0.04, 0.03, 0, 0, 0, 0], sit: [0.9, 0.3, 0.25, 0.2, 0.1, -0.1, -0.2, -0.3, -0.3], stand: [0.45, 0.2, 0.2, 0.15, 0.1, -0.08, -0.15, -0.2, -0.2] }
+  // 影片：坐著、停下來時尾巴沿背部往上翹成 S 形，跑的時候拖在後面微微起伏
+  const tailRest = { run: [0.25, 0.08, 0.05, 0.04, 0.03, 0, 0, 0, 0], sit: [0.95, 0.35, 0.25, 0.15, 0.05, -0.15, -0.25, -0.35, -0.3], stand: [0.8, 0.35, 0.2, 0.1, 0, -0.15, -0.25, -0.3, -0.25] }
   const tailNow = [...tailRest.stand]
-  const _p = V()
+  const _p = V(), _n2 = V(), _inv = new THREE.Matrix4()
   const update = (t, dt) => {
     acts.tick(dt)
     let speed = 0
@@ -1049,6 +1206,20 @@ function squirrel(env) {
     root.position.set(st.s, br.top(st.s), 0)
     root.rotation.y = st.h
     focus.set(st.s, 0.3, 0)
+    // 尾巴外觀跟著關節走（在 root 的座標系裡排）
+    root.updateMatrixWorld(true)
+    _inv.copy(root.matrixWorld).invert()
+    tailPts[0].set(0, 0.006, -0.42 * L).applyMatrix4(body.matrix)
+    tail.forEach((sg, i) => tailPts[i + 1].setFromMatrixPosition(sg.matrixWorld).applyMatrix4(_inv))
+    tailPts[10].setFromMatrixPosition(tailEnd.matrixWorld).applyMatrix4(_inv)
+    tailGeo.userData.update(tailPts, Y)
+    // 果實在兩隻前掌中間
+    nut.visible = acts.name === 'sit'
+    if (nut.visible) {
+      legs[0].foot.getWorldPosition(_p); legs[1].foot.getWorldPosition(_n2)
+      nut.position.copy(_p).add(_n2).multiplyScalar(0.5).applyMatrix4(_inv)
+      nut.position.y += 0.004; nut.rotation.set(0.5, 0, 0)
+    }
   }
   return { obj: root, focus, update }
 }
@@ -1150,49 +1321,169 @@ function lizard(env) {
 }
 
 /* ---------- 池塘烏龜：一隻在石頭上曬太陽，一隻在水裡游 ---------- */
-function turtleModel() {
-  const P = K({ shell: 0x2a291b, scute: 0x423c25, seam: 0x837a48, rim: 0x201f15, plas: 0xd2bb68, blot: 0x3a2e1e, skin: 0x3a4227, line: 0xd3cd6e })
+// 龜殼的盾片：背甲中間一排 5 片椎盾、兩側各 4 片肋盾、外圈一圈緣盾。
+// 回傳所在盾片的編號、種類，以及到盾片邊緣的相對距離 d（0 在縫上、1 在盾片中心）。
+function scuteAt(u, s, c) {
+  const ac = Math.abs(c)
+  if (s < 0.3 || u < 0.06 || u > 0.94) {
+    const n = 12, f = u * n, k = Math.floor(f)
+    const along = Math.min(f - k, 1 - (f - k)) * 2
+    const across = u < 0.06 || u > 0.94 ? 1 : Math.min(s / 0.3, 1) * 1.6
+    return { id: 40 + k + (c > 0 ? 0 : 20), kind: 'm', d: Math.min(along, across) }
+  }
+  if (ac < 0.3) {
+    const f = (u - 0.06) / 0.88 * 5, k = Math.floor(f)
+    return { id: k, kind: 'v', d: Math.min((1 - ac / 0.3) * 1.4, Math.min(f - k, 1 - (f - k)) * 2) }
+  }
+  const f = (u - 0.1) / 0.8 * 4, k = clamp(Math.floor(f), 0, 3), fu = clamp(f - k, 0, 1)
+  const t = (ac - 0.3) / (0.954 - 0.3)
+  return { id: 10 + k + (c > 0 ? 0 : 4), kind: 'c', d: Math.min(Math.min(t, 1 - t) * 2, Math.min(fu, 1 - fu) * 2) }
+}
+const cellRand = (id) => fract(Math.sin(id * 91.7 + 3.1) * 43758.5)
+
+// 背甲的花紋逐像素畫（頂點色會把細縫和生長紋糊掉）：和 scuteAt 同一套分法
+function shellMaterial(P, pond, wet) {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: wet ? 0.28 : 0.62 })
+  const U = {}
+  for (const k of ['scute', 'scute2', 'seam', 'ring', 'plas', 'blot']) U['c_' + k] = { value: P[k] }
+  U.uPond = { value: pond ? 1 : 0 }
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U)
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 ucs; varying vec3 vUcs; varying vec3 vOp;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUcs = ucs; vOp = position;')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vUcs; varying vec3 vOp;
+        uniform vec3 c_scute, c_scute2, c_seam, c_ring, c_plas, c_blot; uniform float uPond;
+        float cRand(float id) { return fract(sin(id * 91.7 + 3.1) * 43758.5); }
+        // 回傳 (編號, 到縫的相對距離 d, 是否緣盾)
+        vec3 scuteAt(float u, float s, float c) {
+          float ac = abs(c);
+          if (s < 0.3 || u < 0.06 || u > 0.94) {
+            float f = u * 12.0, k = floor(f), along = min(f - k, 1.0 - (f - k)) * 2.0;
+            float across = (u < 0.06 || u > 0.94) ? 1.0 : min(s / 0.3, 1.0) * 1.6;
+            return vec3(40.0 + k + (c > 0.0 ? 0.0 : 20.0), min(along, across), 1.0);
+          }
+          if (ac < 0.3) {
+            float f = (u - 0.06) / 0.88 * 5.0, k = floor(f);
+            return vec3(k, min((1.0 - ac / 0.3) * 1.4, min(f - k, 1.0 - (f - k)) * 2.0), 0.0);
+          }
+          float f = (u - 0.1) / 0.8 * 4.0, k = clamp(floor(f), 0.0, 3.0), fu = clamp(f - k, 0.0, 1.0);
+          float t = (ac - 0.3) / (0.954 - 0.3);
+          return vec3(10.0 + k + (c > 0.0 ? 0.0 : 4.0), min(min(t, 1.0 - t) * 2.0, min(fu, 1.0 - fu) * 2.0), 0.0);
+        }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float u = vUcs.x, s = vUcs.y, c = vUcs.z;
+          vec3 col;
+          if (s < -0.05) {
+            float f = u * 6.0, k = floor(f);
+            float d = min(min(f - k, 1.0 - (f - k)) * 2.0, min(abs(c) / 0.6, 1.0) * 2.0);
+            col = mix(c_plas, c_blot, mix(0.5, 0.85, uPond) * smoothstep(0.35, 0.55, d) * (0.6 + 0.4 * cRand(k + (c > 0.0 ? 7.0 : 0.0))));
+            col = mix(col, c_ring, 0.35 * (1.0 - smoothstep(0.0, 0.05, d)));
+          } else {
+            vec3 sc = scuteAt(u, max(s, 0.0), c);
+            float d = sc.y, r = cRand(sc.x);
+            col = mix(c_scute, c_scute2, r);
+            if (uPond > 0.5) {
+              // 生長紋：繞著盾片中心一圈圈的細線，越靠中心越淡
+              float dn = d + 0.03 * sin(vOp.x * 900.0 + vOp.z * 700.0) + 0.02 * sin(vOp.z * 1500.0);
+              float rings = smoothstep(0.78, 0.95, 0.5 + 0.5 * cos(dn * 3.14159 * 7.0 + r * 3.0));
+              col = mix(col, c_ring, 0.28 * rings * smoothstep(0.04, 0.2, d) * (1.0 - smoothstep(0.7, 0.9, d)));
+              col *= 0.9 + 0.22 * smoothstep(0.7, 1.0, d);
+            } else {
+              // 紅耳龜：細細彎彎的黃紋
+              float w = sin(d * 15.0 + sin(vOp.x * 260.0 + r * 5.0) * 1.4 + sin(vOp.z * 210.0) * 0.9 + r * 6.0);
+              col = mix(col, c_ring, 0.5 * smoothstep(0.9, 0.98, w) * smoothstep(0.08, 0.25, d));
+            }
+            col = mix(col, c_seam, 0.85 * (1.0 - smoothstep(0.012, 0.035, d)));
+            col *= 1.0 - 0.35 * (1.0 - smoothstep(0.0, 0.012, d));   // 縫底比較暗
+            if (sc.z > 0.5 && s < 0.08) col = mix(col, c_plas, 0.5);
+          }
+          diffuseColor.rgb = col * vColor;
+        }`)
+  }
+  m.customProgramCacheKey = () => 'shell' + (pond ? 1 : 0)
+  return m
+}
+
+// kind：'pond' 斑龜（背甲深褐、盾片有淡色縫與生長紋、腹甲黃底每片一塊黑斑、脖子細黃線）
+//       'slider' 紅耳龜（背甲橄欖綠帶黃色紋、眼後一塊紅斑）
+function turtleModel(kind = 'pond', wet = false) {
+  const pond = kind === 'pond'
+  const P = K(pond
+    ? { scute: 0x2e2517, scute2: 0x3d311d, seam: 0x8a7444, ring: 0x1c160e, plas: 0xd6c07a, blot: 0x33281b, skin: 0x2a2d1d, line: 0xc9bf62, red: 0x2a2d1d }
+    : { scute: 0x28301a, scute2: 0x343e1e, seam: 0x5f5c34, ring: 0xb0a040, plas: 0xd9c66a, blot: 0x4a3f22, skin: 0x2a3820, line: 0xcfc55a, red: 0xb8321e })
   const root = new THREE.Group(), shell = new THREE.Group()
   shell.position.y = 0.024; root.add(shell)
+  const shellMat = shellMaterial(P, pond, wet)
+  const skinMat = wet ? gloss : skin
   shell.add(loft([[0, 0.004, -0.1, 0.012, 0.004, 0.002], [0, 0.004, -0.094, 0.058, 0.03, 0.006], [0, 0.002, -0.07, 0.084, 0.052, 0.01], [0, 0, -0.03, 0.095, 0.064, 0.013], [0, 0, 0.02, 0.095, 0.065, 0.013], [0, 0.002, 0.06, 0.085, 0.055, 0.011], [0, 0.004, 0.088, 0.06, 0.034, 0.007], [0, 0.005, 0.097, 0.014, 0.006, 0.003]],
-    (o, u, s, c, p) => {
-      const qx = p.x / 0.095, qz = p.z / 0.1
-      if (s < -0.05) { o.copy(P.plas).lerp(P.blot, 0.8 * ss(Math.sin(qz * 9) * Math.sin(qx * 6 + 1), 0.45, 0.7)); return }
-      o.copy(P.shell).lerp(P.scute, 0.6 * (0.5 + 0.5 * Math.cos(qz * Math.PI * 2.5) * Math.cos(qx * Math.PI * 1.5)))
-      let seam = 0
-      if (s > 0.35) {
-        const vert = Math.abs(qx) < 0.3
-        seam = Math.max(band2(Math.abs(qx), 0.29, 0.31, 0.015), (vert ? 1 : 0) * ss(Math.abs(Math.sin(qz * Math.PI * 2.5)), 0.12, 0.04), (vert ? 0 : 1) * ss(Math.abs(Math.sin(qz * Math.PI * 2 + 0.6)), 0.1, 0.03), band2(s, 0.33, 0.37, 0.015))
-      } else {
-        seam = ss(Math.abs(Math.sin(Math.atan2(qx, qz) * 11)), 0.12, 0.03)
-        o.lerp(P.rim, 0.4)
-      }
-      o.lerp(P.seam, 0.65 * seam)
-    }, { seg: 28, sub: 6, grain: 0.04, material: gloss }))
-  const striped = (o, u, s, c) => { o.copy(P.skin).lerp(P.line, ss(Math.abs(Math.sin(Math.atan2(s, c) * 6)), 0.86, 0.95)); if (s < -0.6) o.lerp(P.line, 0.5) }
+    (o) => {
+      o.setRGB(1, 1, 1)   // 花紋在 shellMaterial 裡畫，頂點色只留一點顆粒感
+    }, { seg: 56, sub: 9, grain: 0.08, material: shellMat,
+      // 縫是凹下去的溝、盾片中心微微隆起；斑龜背上有一條低低的稜
+      displace: (u, s, c) => {
+        if (s < -0.05) return -0.0006 * ss(0.08, 0, Math.min(Math.abs(c) * 3, Math.abs(Math.sin(u * 6 * Math.PI))))
+        const { d } = scuteAt(u, Math.max(s, 0), c)
+        return -0.0014 * ss(0.07, 0, d) + 0.0008 * ss(d, 0.5, 1) + (pond ? 0.0018 * ss(0.12, 0, Math.abs(c)) * ss(s, 0.5, 0.9) : 0)
+      } }))
+  // 皮膚：沿著脖子、頭的細黃線
+  const striped = (o, u, s, c, p, n = pond ? 8 : 5) => {
+    const a = Math.atan2(s, c)
+    o.copy(P.skin).lerp(P.line, ss(Math.abs(Math.sin(a * n)), pond ? 0.95 : 0.9, 0.995))
+    if (s < -0.6) o.lerp(P.line, 0.45)
+  }
   const neck = new THREE.Group()
   neck.position.set(0, 0.022, 0.07); shell.add(neck)
-  neck.add(loft([[0, 0, -0.03, 0.016, 0.014], [0, 0, 0, 0.0145, 0.013], [0, 0.002, 0.03, 0.0135, 0.0125]], striped, { seg: 14 }))
+  neck.add(loft([[0, 0, -0.035, 0.017, 0.015], [0, 0, -0.005, 0.015, 0.0135], [0, 0.002, 0.03, 0.0135, 0.0125]], (o, u, s, c, p) => {
+    striped(o, u, s, c)
+    o.multiplyScalar(0.92 + 0.12 * Math.sin(u * 60))   // 頸部皺褶
+  }, { seg: 64, material: skinMat }))
   const head = new THREE.Group()
   head.position.z = 0.03; neck.add(head)
-  head.add(loft([[0, 0.002, -0.006, 0.013, 0.012], [0, 0.003, 0.004, 0.0155, 0.0135, 0.012], [0, 0.003, 0.016, 0.0135, 0.0115, 0.01], [0, 0.002, 0.027, 0.008, 0.007, 0.006], [0, 0.001, 0.032, 0.002, 0.002]], striped, { seg: 14 }))
-  for (const sx of [1, -1]) head.add(eye(0.0032, 0x9a8a30, [sx * 0.011, 0.0065, 0.013], sx, 0.35))
+  const eyes = [[0.0105, 0.0068, 0.016], [-0.0105, 0.0068, 0.016]]
+  head.add(loft([[0, 0.002, -0.006, 0.0125, 0.0115], [0, 0.003, 0.004, 0.0145, 0.013, 0.011], [0, 0.0035, 0.016, 0.0125, 0.011, 0.0092], [0, 0.0025, 0.026, 0.0092, 0.0082, 0.0062], [0, 0.0014, 0.0315, 0.006, 0.0052, 0.0042], [0, 0.0008, 0.0345, 0.0022, 0.002]],
+    (o, u, s, c, p) => {
+      striped(o, u, s, c)
+      // 下巴到嘴角的黃線、嘴巴的縫、鼻孔
+      o.lerp(P.line, 0.7 * band2(s, -0.25, -0.12, 0.04) * ss(u, 0.3, 0.6))
+      o.lerp(P.ring.clone().multiplyScalar(0.3), 0.8 * band2(s, -0.42, -0.34, 0.03) * ss(u, 0.55, 0.75))
+      if (u > 0.93 && s > 0.2) o.multiplyScalar(0.4)
+      const ear = Math.min(...[1, -1].map((sx) => Math.hypot(p.x - sx * 0.0115, p.y - 0.003, (p.z - 0.004) * 0.7)))
+      o.lerp(P.red, ss(0.0052, 0.0035, ear))
+    }, { seg: 64, sub: 8, material: skinMat }))
+  for (const [x, y, z] of eyes) head.add(eye(0.0034, pond ? 0x8c8a3a : 0x6b6a2a, [x, y, z], Math.sign(x), 0.35))
+  const claw = new THREE.CylinderGeometry(0.0002, 0.0011, 0.0045, 5).translate(0, 0.00225, 0).rotateX(Math.PI / 2 + 0.35)
   const legs = [[1, 0.06, 0.9], [-1, 0.06, 0.9], [1, -0.065, 2.3], [-1, -0.065, 2.3]].map(([sx, z, yaw], i) => {
     const g = new THREE.Group()
     g.position.set(sx * 0.06, 0.004, z); g.rotation.order = 'YXZ'
-    g.add(loft([[0, 0, -0.008, 0.012, 0.009], [0, 0, 0.012, 0.013, 0.008], [0, -0.001, 0.03, 0.015, 0.004], [0, -0.001, 0.04, 0.008, 0.002]], striped, { seg: 12, up: V(0, 1, 0) }))
+    g.add(loft([[0, 0, -0.008, 0.012, 0.009], [0, 0, 0.012, 0.013, 0.008], [0, -0.001, 0.03, 0.016, 0.0042], [0, -0.001, 0.04, 0.0095, 0.002]], (o, u, s, c) => {
+      striped(o, u, s, c, null, 2)
+      o.multiplyScalar(0.85 + 0.25 * ss(Math.sin(u * 40) * Math.sin(c * 12), 0.2, 0.6))   // 鱗片
+    }, { seg: 24, up: V(0, 1, 0), material: skinMat }))
+    // 爪：前腳 5 根、後腳 4 根
+    const n = i < 2 ? 5 : 4
+    for (let k = 0; k < n; k++) {
+      const m = new THREE.Mesh(claw, mat(0x2b241a, 0.4))
+      const f = k / (n - 1) - 0.5
+      m.position.set(f * 0.022, -0.0012, 0.038 + 0.004 * Math.cos(f * 2.5)); m.rotation.y = f * 0.7
+      g.add(m)
+    }
     shell.add(g)
     return { g, base: sx * yaw, sx, front: i < 2, off: [0, 0.5, 0.5, 0][i] }
   })
-  const tail = loft([[0, 0.01, -0.09, 0.008, 0.006], [0, 0.006, -0.11, 0.005, 0.004], [0, 0.002, -0.125, 0.001, 0.001]], striped, { seg: 8 })
+  const tail = loft([[0, 0.01, -0.09, 0.008, 0.006], [0, 0.006, -0.11, 0.005, 0.004], [0, 0.002, -0.125, 0.001, 0.001]], (o, u, s, c) => striped(o, u, s, c, null, 2), { seg: 16, material: skinMat })
   shell.add(tail)
   return { root, shell, neck, head, legs }
 }
 function turtleAnimate(tm, st, t, dt, mode) {
   // mode：walk / swim / bask / hide
-  st.neck = damp(st.neck, mode === 'hide' ? -0.032 : mode === 'bask' ? 0.008 : 0, mode === 'hide' ? 8 : 2, dt)
-  tm.neck.position.z = 0.07 + st.neck
-  tm.neck.rotation.x = damp(tm.neck.rotation.x, mode === 'swim' ? -0.45 : mode === 'bask' ? -0.25 : -0.05, 3, dt)
+  // 影片：曬太陽時脖子整個伸出來、斜斜往上，頭接近水平；呼吸時脖子一伸一縮
+  st.neck = damp(st.neck, mode === 'hide' ? -0.032 : mode === 'bask' ? 0.02 : 0.004, mode === 'hide' ? 8 : 2, dt)
+  tm.neck.position.z = 0.07 + st.neck + (mode === 'hide' ? 0 : 0.0012 * Math.sin(t * 1.4))
+  tm.neck.rotation.x = damp(tm.neck.rotation.x, mode === 'swim' ? -0.45 : mode === 'bask' ? -0.42 : -0.12, 3, dt)
   tm.head.rotation.y = damp(tm.head.rotation.y, st.look, 3, dt)
   tm.head.rotation.x = -tm.neck.rotation.x * 0.6
   const ph = st.phase * Math.PI * 2
@@ -1206,9 +1497,13 @@ function turtleAnimate(tm, st, t, dt, mode) {
     } else if (mode === 'swim') {
       const s = Math.sin(ph + (l.sx > 0 ? 0 : Math.PI) + (l.front ? 0 : Math.PI / 2))
       yaw += l.sx * (l.front ? 0.55 : 0.4) * s; pitch = 0.1 + 0.25 * Math.cos(ph)
-    } else if (mode === 'bask' && !l.front) { yaw = l.sx * 2.85; pitch = 0.05 }
+    } else if (mode === 'bask') {
+      // 後腳往後伸直、腳底朝上攤開；前腳往前撐
+      if (l.front) { yaw = l.sx * 0.6; pitch = 0.15 } else { yaw = l.sx * 2.9; pitch = 0.02 }
+    }
     l.g.rotation.y = damp(l.g.rotation.y, yaw - tuck * l.sx * 0.5, 6, dt)
     l.g.rotation.x = damp(l.g.rotation.x, pitch, 6, dt)
+    l.g.rotation.z = damp(l.g.rotation.z, mode === 'bask' && !l.front ? -l.sx * 1.1 : 0, 4, dt)
     l.g.scale.setScalar(damp(l.g.scale.x, 1 - tuck * 0.45, 6, dt))
   })
   tm.shell.rotation.z = mode === 'swim' ? 0.05 * Math.sin(ph) : 0
@@ -1216,7 +1511,7 @@ function turtleAnimate(tm, st, t, dt, mode) {
 function turtles(env) {
   const S = 3, g = new THREE.Group(), focus = V(0, 0.8, 0)
   // 曬太陽的那隻
-  const a = turtleModel(), sa = { neck: 0, look: 0, phase: 0, amp: 0 }
+  const a = turtleModel('pond', false), sa = { neck: 0, look: 0, phase: 0, amp: 0 }
   a.root.scale.setScalar(S); g.add(a.root)
   const wa = new Walker({ radius: 0.22, speed: 0.06, turn: 0.5 })
   wa.h = env.face(1, 0.6)
@@ -1225,7 +1520,7 @@ function turtles(env) {
     if (n === 'turn') wa.want = wa.h + ac.sgn * rnd(0.4, 1)
   })
   // 在水裡游的那隻
-  const b = turtleModel(), sb = { neck: 0, look: 0, phase: 0, amp: 1 }
+  const b = turtleModel('slider', true), sb = { neck: 0, look: 0, phase: 0, amp: 1 }
   b.root.scale.setScalar(S * 0.8); g.add(b.root)
   const rocks = env.rocks
   const nearRock = (x, z, r = 0.25) => rocks.some((rk) => Math.hypot(x - rk.x, z - rk.z) < rk.r + r)
