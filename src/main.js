@@ -62,7 +62,8 @@ story.innerHTML = [
     烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）<br>
     夜鷺模型：<a href="https://sketchfab.com/3d-models/e2d5eb47994c442086c92a83c60ef303" target="_blank" rel="noopener">夜鷺</a> by kangsirmemes（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>）<br>
     攀蜥模型：<a href="https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10" target="_blank" rel="noopener">Sakishima Tree Lizard</a> by ffish.asia / floraZia.com（CC0）<br>
-    五色鳥模型：以 <a href="https://www.tripo3d.ai/" target="_blank" rel="noopener">Tripo AI</a> 由照片生成；照片 <a href="https://commons.wikimedia.org/wiki/File:Taiwan_barbet.jpg" target="_blank" rel="noopener">Taiwan barbet</a> by longan Jiang（CC0）</div>
+    五色鳥模型：以 <a href="https://www.tripo3d.ai/" target="_blank" rel="noopener">Tripo AI</a> 由照片生成；照片 <a href="https://commons.wikimedia.org/wiki/File:Taiwan_barbet.jpg" target="_blank" rel="noopener">Taiwan barbet</a> by longan Jiang（CC0）<br>
+    黑冠麻鷺、白頭翁、綠繡眼、珠頸斑鳩、樹鵲模型：參考圖以 ChatGPT 生成，再以 Tripo AI 轉成 3D</div>
   </div></section>`,
 ].join('')
 const steps = [...story.querySelectorAll('.step')]

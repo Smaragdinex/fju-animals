@@ -5,6 +5,8 @@ import bpy, sys
 from mathutils import Vector
 a = sys.argv[sys.argv.index('--')+1:]
 src, dst, kind = a[0], a[1], a[2]
+import json
+EXTRA = json.loads(a[3]) if len(a) > 3 else {}   # 其他停枝鳥的點位可以從命令列傳進來
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=src)
 ob = [o for o in bpy.data.objects if o.type == 'MESH'][0]
@@ -36,6 +38,32 @@ elif kind == 'barbet':
          'tail': ((0.12, 0.56, 0.12), (0.17, 0.37, 0.17), 'body', 0.6)}
     for s, n in ((1, 'L'), (-1, 'R')):
         B['wing' + n] = ((-0.06 - s * 0.04, 0.79, 0.0 + s * 0.075), (0.12 - s * 0.04, 0.56, 0.1 + s * 0.075), 'body', 0.35)
+elif kind in ('bulbul', 'whiteeye', 'treepie'):
+    # Tripo 生成、ChatGPT 參考圖都是正側面頭朝左，所以模型都是頭朝 -x、左右對稱（z）。點位見 fju-animals README。
+    P = {'bulbul': dict(tail0=(0.18, 0.24), tailE=(0.47, 0.03), hip=(0.15, 0.24), chest=(-0.22, 0.55), nk=(-0.3, 0.62), bill=(-0.49, 0.64), wing0=(-0.2, 0.5), wingE=(0.3, 0.25), wz=0.12)}
+    if kind in EXTRA: P.update(EXTRA)
+    q = P[kind]
+    B = {'body': ((*q['hip'][:1], q['hip'][1], 0), (q['chest'][0], q['chest'][1], 0), None, 1.0),
+         'neck': ((q['chest'][0], q['chest'][1], 0), (q['nk'][0], q['nk'][1], 0), 'body', 0.8),
+         'head': ((q['nk'][0], q['nk'][1], 0), (q['bill'][0], q['bill'][1], 0), 'neck', 0.8),
+         'tail': ((q['tail0'][0], q['tail0'][1], 0), (q['tailE'][0], q['tailE'][1], 0), 'body', 0.6)}
+    for s, n in ((1, 'L'), (-1, 'R')):
+        B['wing' + n] = ((q['wing0'][0], q['wing0'][1], s * q['wz']), (q['wingE'][0], q['wingE'][1], s * q['wz']), 'body', 0.35)
+elif kind in ('dove', 'heron'):
+    # 地上走的鳥（Tripo 生成，頭朝 -x）：保留生成的腳，綁 thigh → shin → foot。點位從命令列 JSON 傳入。
+    q = EXTRA[kind]
+    p3 = lambda xy, z=0: (xy[0], xy[1], z)
+    B = {'body': (p3(q['hip']), p3(q['chest']), None, 1.0),
+         'neck': (p3(q['chest']), p3(q['nk']), 'body', 0.8),
+         'head': (p3(q['nk']), p3(q['bill']), 'neck', 0.8),
+         'tail': (p3(q['tail0']), p3(q['tailE']), 'body', 0.6)}
+    for s, n in ((1, 'L'), (-1, 'R')):
+        B['wing' + n] = (p3(q['wing0'], s * q['wz']), p3(q['wingE'], s * q['wz']), 'body', 0.4)
+    for n, leg in (('L', q['legL']), ('R', q['legR'])):
+        z = leg[4]
+        B['thigh' + n] = (p3(leg[0], z), p3(leg[1], z), 'body', 0.3)
+        B['shin' + n] = (p3(leg[1], z), p3(leg[2], z), 'thigh' + n, 0.3)
+        B['foot' + n] = (p3(leg[2], z), p3(leg[3], z), 'shin' + n, 0.3)
 else:
     # 攀蜥：頭朝 -x、尾巴繞一圈
     B = {'pelvis': ((0.9, 0.0, 0.0), (0.4, 0.08, 0.0), None, 1.0),
