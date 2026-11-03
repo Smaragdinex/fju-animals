@@ -44,7 +44,7 @@ python3 fju-animals/data/convert.py
   - 五色鳥：參考圖以 ChatGPT 生成（側面、頭朝左、腳露出來、白底），再以 [Tripo AI](https://www.tripo3d.ai/) 轉成 3D。腳用模型自己生成的，`tools/shrink-model.py` 減到 4 萬面後用 `tools/rig-distance.py ... barbet2` 綁骨架（含 thigh → shin → foot），點位在 `tools/bird-points.json`
   - 黑冠麻鷺、白頭翁、綠繡眼、珠頸斑鳩、樹鵲：在同一個 ChatGPT 對話裡生成參考圖（下面的規格），再用 Tripo AI 轉成 3D。原圖在 `models/raw/ref/`（不進 git）
     - 參考圖規格（第一張完整寫、後面說「同樣規格」再換物種）：寫實照片風格、羽色照真實物種；全身正側面、頭朝左、平視不透視；翅膀收好；兩隻腳完整露出、分開站在平面上，**不要樹枝**；純白背景、無陰影、無文字；只畫一隻、置中、約佔畫面 70%；並說明「這是要給 3D 生成工具 Tripo 轉成 3D 模型、之後在 Blender 綁骨架做動作用」
-    - 這樣 Tripo 出來的模型都是頭朝 -x、左右對稱，點位好量。停枝的鳥用 `tools/cut-below.py` 切掉腳（改用程式的 IK 腳），地上走的鳥保留腳、綁 thigh → shin → foot；黑冠麻鷺另外把身體分兩節（body → chest）、脖子分三節（neck → neck2 → neck3），頭部用 `headRigid` 整顆綁給 head（伸脖子時頭和冠羽不變形）；綁骨架都用 `tools/rig-distance.py`（點位和切腳高度存在 `tools/bird-points.json`；白頭翁的點位寫在 rig-distance.py 裡）
+    - 這樣 Tripo 出來的模型都是頭朝 -x、左右對稱，點位好量。停枝的鳥用 `tools/cut-below.py` 切掉腳（改用程式的 IK 腳），地上走的鳥保留腳、綁 thigh → shin → foot；腳趾由 `rig-distance.py` 自動找（腳踝以下的頂點依方向分 4 群，每根兩節，`bird-points.json` 的 `toes` 給起始方向）；走路照影片：抬腳時腳跟往前上提、跗蹠往後折、腳趾收起，落地前伸直張開。黑冠麻鷺另外把身體分兩節（body → chest）、脖子分三節（neck → neck2 → neck3），頭部用 `headRigid` 整顆綁給 head（伸脖子時頭和冠羽不變形）；綁骨架都用 `tools/rig-distance.py`（點位和切腳高度存在 `tools/bird-points.json`；白頭翁的點位寫在 rig-distance.py 裡）
   - 夜鷺和攀蜥用 `tools/shrink-model.py` 減到 3 萬面，再用 `tools/rig-distance.py` 綁骨架（權重依距離算；攀蜥捲起來的尾巴在程式裡拉直）
 
 - 地圖資料 © OpenStreetMap contributors（ODbL），網頁結尾已標示來源。

@@ -74,7 +74,37 @@ elif kind in ('dove', 'heron', 'barbet2'):
         z = leg[4]
         B['thigh' + n] = (p3(leg[0], z), p3(leg[1], z), 'body', 0.3)
         B['shin' + n] = (p3(leg[1], z), p3(leg[2], z), 'thigh' + n, 0.3)
-        B['foot' + n] = (p3(leg[2], z), p3(leg[3], z), 'shin' + n, 0.3)
+        if 'toes' not in q:
+            B['foot' + n] = (p3(leg[2], z), p3(leg[3], z), 'shin' + n, 0.3)
+            continue
+        # 腳趾：腳踝以下、離這隻腳踝比較近的頂點，依方向分成 4 群（toes 給起始方向，頭朝 -x），
+        # 每群最遠的點是趾尖；foot 從腳踝往下到趾根，每根腳趾兩節（彎腳趾用）
+        import math
+        ank = p3(leg[2], z); oth = p3((q['legR'] if n == 'L' else q['legL'])[2])
+        V = [(c.x, c.z, -c.y) for c in (ob.matrix_world @ vv.co for vv in ob.data.vertices)]
+        hd = lambda p, a: math.hypot(p[0] - a[0], p[2] - a[2])
+        reachT = hd(p3(leg[3], z), ank) * 1.8
+        pts = [p for p in V if p[1] < ank[1] and hd(p, ank) < reachT and hd(p, ank) < hd(p, oth) and hd(p, ank) > reachT * 0.2]
+        dirs = [((p[0] - ank[0]) / hd(p, ank), (p[2] - ank[2]) / hd(p, ank)) for p in pts]
+        C = [tuple(c) for c in q['toes']]
+        C = [(c[0] / math.hypot(*c), c[1] / math.hypot(*c)) for c in C]
+        for _ in range(15):
+            lab = [max(range(len(C)), key=lambda k: d[0] * C[k][0] + d[1] * C[k][1]) for d in dirs]
+            for k in range(len(C)):
+                m = [dirs[i] for i in range(len(dirs)) if lab[i] == k]
+                if m:
+                    sx, sz = sum(a for a, _ in m), sum(b for _, b in m); L = math.hypot(sx, sz) or 1
+                    C[k] = (sx / L, sz / L)
+        ball = (ank[0], min(0.015, ank[1] * 0.4), ank[2])
+        B['foot' + n] = (ank, ball, 'shin' + n, 0.3)
+        for k in range(len(C)):
+            m = [pts[i] for i in range(len(pts)) if lab[i] == k]
+            if len(m) < 20: continue
+            tip = max(m, key=lambda p: hd(p, ank))
+            mid = tuple(ball[j] + (tip[j] - ball[j]) * 0.5 for j in range(3))
+            B[f'toe{n}{k}a'] = (ball, mid, 'foot' + n, 0.12)
+            B[f'toe{n}{k}b'] = (mid, tip, f'toe{n}{k}a', 0.12)
+            print('TOE', n, k, 'n', len(m), 'tip', tuple(round(t, 3) for t in tip))
 else:
     # 攀蜥：頭朝 -x、尾巴繞一圈
     B = {'pelvis': ((0.9, 0.0, 0.0), (0.4, 0.08, 0.0), None, 1.0),
@@ -120,7 +150,7 @@ for v in ob.data.vertices:
     if leg(ds[0][1]): ds = [d for d in ds if not tail(d[1])]
     elif tail(ds[0][1]): ds = [d for d in ds if not leg(d[1])]
     # 鳥腳：最近的是哪一隻腳就只跟那隻腳（和身體）混，不然抬一隻腳另一隻的皮也被拉走
-    side = lambda n: n[-1] if n[:-1] in ('thigh', 'shin', 'foot') else None
+    side = lambda n: n[-1] if n[:-1] in ('thigh', 'shin', 'foot') else (n[3] if n.startswith('toe') else None)
     if side(ds[0][1]): ds = [d for d in ds if side(d[1]) in (None, side(ds[0][1]))]
     ds = ds[:3]
     ws = [(1.0 / (d ** 4 + 1e-6), n) for d, n in ds]

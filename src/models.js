@@ -325,6 +325,16 @@ function rigged(name, { straight = {} } = {}) {
   }
 }
 const AX = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) }
+// 腳趾（toeL0a → toeL0b …，Blender 自動找的）：彎曲軸 = 腳趾方向 × 往下，繞它正轉 = 趾尖往下勾
+function toesOf(r, sd) {
+  r.model.updateWorldMatrix(true, true)
+  const at = (b) => r.model.worldToLocal(b.getWorldPosition(V()))
+  return Object.keys(r.bones).filter((n) => n.startsWith('toe' + sd) && n.endsWith('a')).map((n) => {
+    const a = r.bones[n], b = r.bones[n.slice(0, -1) + 'b'], d = at(b).sub(at(a)).setY(0).normalize()
+    return { a: n, b: b.name, axis: d.cross(V(0, -1, 0)).normalize() }
+  })
+}
+function curlToes(r, toes, c) { if (c) for (const t of toes) { r.turn(t.a, t.axis, c * 0.6); r.turn(t.b, t.axis, c * 0.9) } }
 
 /* ---------- 地上走的鳥：現成或 Tripo 生成的模型 + 骨架（body → neck → head、tail、兩翼、兩腳 thigh → shin → foot） ---------- */
 // cfg：name 模型、H 顯示高度、h0 模型高度、rotY 讓頭朝 +z、lat「繞它正轉 = 抬頭、腳往前」的左右軸、
@@ -363,10 +373,11 @@ function groundTripo(env, cfg) {
     const a = knee.clone().sub(hip), b = ankle.clone().sub(knee)
     const bend = Math.sign(a.dot(FWD) * b.y - a.y * b.dot(FWD))
     // 腳是斜的（往外張），IK 在側面平面裡算，所以骨長也要用投影到側面的長度
-    return { sd, rest: ankle, L1: Math.hypot(a.dot(FWD), a.y), L2: Math.hypot(b.dot(FWD), b.y), bend, flat: r.bones['foot' + sd].userData.inv.clone().invert(),
+    return { sd, toes: toesOf(r, sd), rest: ankle, L1: Math.hypot(a.dot(FWD), a.y), L2: Math.hypot(b.dot(FWD), b.y), bend, flat: r.bones['foot' + sd].userData.inv.clone().invert(),
       plant: null, from: V(), to: V(), t: 1, pos: V() }
   })
-  const stride = cfg.stride ?? 0.22 * cfg.H, lift = cfg.lift ?? 0.1 * cfg.H, swing = cfg.swingT ?? 0.32
+  const stride = cfg.stride ?? 0.22 * cfg.H, lift = cfg.lift ?? 0.06 * cfg.H, swing = cfg.swingT ?? 0.32
+  const [KA, KB] = cfg.knee ?? [0.5, 1.1]   // 抬腳時：腳跟（看起來像膝蓋）往前上抬多少、跗蹠往後折多少
   const ik = (L, target) => {
     const hip = mp('thigh' + L.sd), tg = r.model.worldToLocal(_t.copy(target))
     const du = _d.subVectors(tg, hip).dot(FWD), dv = tg.y - hip.y
@@ -379,12 +390,20 @@ function groundTripo(env, cfg) {
     rotM('thigh' + L.sd, N, want - ang(hip, mp('shin' + L.sd)))
     const knee = mp('shin' + L.sd)
     rotM('shin' + L.sd, N, ang(knee, tg) - ang(knee, mp('foot' + L.sd)))
+    // 抬腳（照影片）：腳跟往前上提、跗蹠往後折讓腳掌拖在後面，過一半後再往前伸直、落地
+    const sw = L.t < 1 ? L.t : 0
+    if (sw) {
+      rotM('thigh' + L.sd, N, -KA * Math.sin(Math.PI * sw))
+      rotM('shin' + L.sd, N, KB * Math.sin(Math.PI * Math.min(1, sw / 0.8)))
+    }
     // 腳掌：回到模型座標裡原本的角度（貼平），抬腳時腳趾往下垂
     const fb = r.bones['foot' + L.sd]
     _p.copy(r.model.getWorldQuaternion(_q)).invert().multiply(fb.parent.getWorldQuaternion(_q)).invert()
     fb.quaternion.copy(_p.multiply(L.flat))
     fb.updateWorldMatrix(false, true)
-    if (L.t < 1) rotM('foot' + L.sd, N, 0.3 * Math.sin(Math.PI * L.t))
+    if (sw) rotM('foot' + L.sd, N, 0.5 * Math.sin(Math.PI * Math.min(1, sw / 0.85)))
+    // 腳趾：空中收起來、快落地時張開，踩地時平貼
+    curlToes(r, L.toes, sw ? 0.9 * Math.sin(Math.PI * Math.min(1, sw / 0.85)) - 0.15 * ss(sw, 0.8, 1) : 0)
   }
   const update = (t, dt) => {
     acts.tick(dt)
@@ -467,13 +486,13 @@ function nightHeron(env) {
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
 function malayanHeron(env) {
   return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1,
-    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.4, lift: 0.12, focusY: 0.5,
+    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.45, lift: 0, knee: [1.2, 1.9], focusY: 0.5,
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
   return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.46, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.25, shadow: 0.18,
-    walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.16, lift: 0.04, focusY: 0.3,
+    walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.18, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
 
@@ -552,6 +571,7 @@ function perchRigged(env, cfg) {
   inner.add(r.model); inner.rotation.y = cfg.rotY
   lift.add(inner); root.add(lift)
   const hp = new Hopper(env, { rest: [2, 7], dur: 0.32, ...cfg.hopper })
+  const toes = [toesOf(r, 'L'), toesOf(r, 'R')]
   const gl = new Glance([0.5, 1.6], 0.8, 0.3)
   const acts = new Acts({ idle: [4, 2, 5], call: [3, 2, 4], preen: [0.8, 1.5, 3] })
   const c = { yaw: 0, pitch: 0, call: 0 }, focus = V()
@@ -582,6 +602,9 @@ function perchRigged(env, cfg) {
       r.turn('shin' + s, LAT, -bend * 1.2 - tuck * 1.6)
       r.turn('foot' + s, LAT, bend * 0.6 + tuck * 1.2)
     }
+    // 腳趾：平常勾住樹枝，蹬出去時放開、空中半收，落地再抓緊
+    const grip = 0.55 - 0.65 * push - 0.3 * air + 0.25 * land
+    toes.forEach((t) => curlToes(r, t, grip))
     lift.position.y = -cfg.drop * k * crouch
     root.position.set(hp.s, env.branch.top(hp.s) + hp.y, 0)
     root.rotation.y = hp.h
