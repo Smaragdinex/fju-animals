@@ -516,10 +516,11 @@ function malayanHeron(env) {
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
+// 斑鳩常一對一起在地上走
 function spottedDove(env) {
-  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.05, bobGain: 1.9, shadow: 0.18,
-    walk: { radius: 1.2, speed: 0.15 }, stride: 0.11, swingT: 0.16, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
-    acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
+  return groundGroup(2, 0.45, (avoid) => groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.05, bobGain: 1.9, shadow: 0.18,
+    walk: { radius: 1.2, speed: 0.15, avoid }, stride: 0.11, swingT: 0.16, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
+    acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } }))
 }
 
 /* ---------- 停枝的鳥：Tripo 生成的模型 + 程式做的 IK 腳 ---------- */
@@ -642,23 +643,47 @@ function perchRigged(env, cfg) {
 function barbet(env) { return perchRigged(env, { name: 'barbet-rig', k: 0.6, rotY: Math.PI / 2, lat: V(0, 0, -1), foot: 0.01, drop: 0.05, beat: 9 }) }
 // 白頭翁：ChatGPT 參考圖 → Tripo，正側面頭朝 -x
 // 綠繡眼常常幾隻一起：三隻在同一根枝上跳，彼此不擠在一起
-function whiteeye(env) {
+// 同一根枝上好幾隻：各跳各的，但不會跳到別隻身上（gap 公尺內有鳥就不跳），一開始在鏡頭正對的那段枝上分開站
+function perchGroup(n, gap, start, mk) {
   const birds = []
-  const one = () => perchTripo(env, { name: 'whiteeye-rig', k: 0.42, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.055, 0.17, 0], leg: 0.84, legC: [0x5d6266, 0x676c70, 0x5d6266], beat: 11,
-    hopper: { rest: [0.8, 3], blocked: (s1, me) => birds.some((b) => b.hopper !== me && Math.abs(b.hopper.s - s1) < 0.28) } })
-  for (let i = 0; i < 3; i++) birds.push(one())
-  // 一開始分散在鏡頭正對的那段枝上
-  birds.forEach((b, i) => { b.hopper.s = -1.1 + i * 0.4 })
+  const blocked = (s1, me) => birds.some((b) => b.hopper !== me && Math.abs(b.hopper.s - s1) < gap)
+  for (let i = 0; i < n; i++) birds.push(mk(blocked))
+  birds.forEach((b, i) => { b.hopper.s = start + i * gap * 1.4 })
+  return group(birds, () => V(birds.reduce((a, b) => a + b.hopper.s, 0) / n, 0.3, 0))
+}
+// 地上兩隻：各走各的，選目的地和走的路線都會避開另一隻
+function groundGroup(n, gap, mk) {
+  const birds = []
+  const near = (x, z, me) => birds.some((b) => {
+    const w = b.walker
+    if (w.p === me) return false
+    return Math.hypot(x - w.p.x, z - w.p.y) < gap || (w.goal && Math.hypot(x - w.goal.x, z - w.goal.y) < gap)
+  })
+  const avoid = (x, z, p) => { for (let k = 1; k <= 8; k++) if (near(lerp(p.x, x, k / 8), lerp(p.y, z, k / 8), p)) return true; return false }
+  for (let i = 0; i < n; i++) birds.push(mk(avoid))
+  birds.forEach((b, i) => b.walker.p.set((i - (n - 1) / 2) * gap * 1.5, (i % 2) * 0.2))
+  return group(birds, () => birds.reduce((a, b) => a.add(b.focus), V()).divideScalar(n))
+}
+function group(birds, center) {
   const g = new THREE.Group(), focus = V()
   birds.forEach((b) => g.add(b.obj))
-  const update = (t, dt) => {
-    birds.forEach((b) => b.update(t, dt))
-    focus.set(birds.reduce((a, b) => a + b.hopper.s, 0) / birds.length, 0.3, 0)
-  }
-  return { obj: g, focus, update, birds }
+  const update = (t, dt) => { birds.forEach((b) => b.update(t, dt)); focus.copy(center()) }
+  return { obj: g, focus, update, birds, acts: birds[0].acts }
 }
-function treepie(env) { return perchTripo(env, { name: 'treepie-rig', k: 0.82, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.19, 0.16, 0], leg: 1.15, legC: [0x1c1c1c, 0x222222, 0x1c1c1c], beat: 6 }) }
-function bulbul(env) { return perchTripo(env, { name: 'bulbul-rig', k: 0.42, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.07, 0.165, 0], leg: 0.86, legC: [0x2c2a26, 0x33302c, 0x2c2a27], beat: 7 }) }
+// 綠繡眼常常幾隻一起：三隻在同一根枝上跳
+function whiteeye(env) {
+  return perchGroup(3, 0.28, -1.1, (blocked) => perchTripo(env, { name: 'whiteeye-rig', k: 0.42, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.055, 0.17, 0], leg: 0.84, legC: [0x5d6266, 0x676c70, 0x5d6266], beat: 11,
+    hopper: { rest: [0.8, 3], blocked } }))
+}
+// 樹鵲、白頭翁常成對出現：兩隻在同一根枝上
+function treepie(env) {
+  return perchGroup(2, 0.55, -1.2, (blocked) => perchTripo(env, { name: 'treepie-rig', k: 0.82, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.19, 0.16, 0], leg: 1.15, legC: [0x1c1c1c, 0x222222, 0x1c1c1c], beat: 6,
+    hopper: { blocked } }))
+}
+function bulbul(env) {
+  return perchGroup(2, 0.32, -0.9, (blocked) => perchTripo(env, { name: 'bulbul-rig', k: 0.42, rotY: Math.PI / 2, lat: V(0, 0, 1), feet: [-0.07, 0.165, 0], leg: 0.86, legC: [0x2c2a26, 0x33302c, 0x2c2a27], beat: 7,
+    hopper: { blocked } }))
+}
 
 /* ---------- 赤腹松鼠 ---------- */
 // 模型是坐著捧東西吃的姿勢。原檔沒有骨架，我們在 Blender 幫它綁了一副（models/rig/，見 README）：
