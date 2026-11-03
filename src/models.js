@@ -479,11 +479,12 @@ function groundTripo(env, cfg) {
     // 鳩鴿類走路點頭：其實是頭前後移動，不是轉。每跨一步，頭很快往前推（thrust），
     // 之後身體往前走、頭停在空中原地不動（hold），所以相對身體慢慢往後退，下一步再推
     if (cfg.bob) {
-      const A = cfg.bob, TH = 0.15
+      const A = cfg.bob, TH = cfg.thrustT ?? 0.13
       if (c.thrust < TH) { c.thrust += dt; const e = Math.min(1, c.thrust / TH); c.hb = lerp(c.hb0, A, e * e * e * (e * (e * 6 - 15) + 10)) }
       else c.hb = moving ? Math.max(-A, c.hb - (w.v / k) * dt) : damp(c.hb, 0, 5, dt)
       const hd = r.bones.head
-      hd.position.add(FWD.clone().multiplyScalar(-c.hb).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
+      // 頭推到前面時稍微低一點（影片裡脖子往前伸時頭會下沉）
+      hd.position.add(FWD.clone().multiplyScalar(-c.hb).add(_d.set(0, -0.3 * Math.max(0, c.hb), 0)).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
     }
     focus.set(w.p.x, cfg.focusY ?? 0.6, w.p.y)
   }
@@ -503,8 +504,8 @@ function malayanHeron(env) {
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
-  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.045, shadow: 0.18,
-    walk: { radius: 1.2, speed: 0.16 }, step: 0.09, swingT: 0.18, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
+  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.035, shadow: 0.18,
+    walk: { radius: 1.2, speed: 0.15 }, stride: 0.11, swingT: 0.16, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
 
