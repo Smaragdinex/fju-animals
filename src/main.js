@@ -59,7 +59,9 @@ story.innerHTML = [
     觀察時請保持距離，不追趕、不餵食。<br>
     地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors<br>
     松鼠模型：<a href="https://sketchfab.com/3d-models/111eaa6a9868485bb2ae71a9b409fbb8" target="_blank" rel="noopener">Eastern gray squirrel</a> by faerbogdan99（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>，已改毛色）<br>
-    烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）</div>
+    烏龜模型：<a href="https://sketchfab.com/3d-models/638f29eae79d40ddb0adaf6ebb8375cc" target="_blank" rel="noopener">Reeve's Pond Turtle</a>、<a href="https://sketchfab.com/3d-models/ce4dd87f62564d7bb3804023044b2b62" target="_blank" rel="noopener">Red-eared Slider</a> by ffish.asia / floraZia.com（CC0）<br>
+    夜鷺模型：<a href="https://sketchfab.com/3d-models/e2d5eb47994c442086c92a83c60ef303" target="_blank" rel="noopener">夜鷺</a> by kangsirmemes（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>）<br>
+    攀蜥模型：<a href="https://sketchfab.com/3d-models/15f772d7febd45a48d3cecf1cef6fe10" target="_blank" rel="noopener">Sakishima Tree Lizard</a> by ffish.asia / floraZia.com（CC0）</div>
   </div></section>`,
 ].join('')
 const steps = [...story.querySelectorAll('.step')]

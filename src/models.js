@@ -715,56 +715,7 @@ const BUILD = {
     })
   },
 
-  nightheron(env) {
-    // 夜鷺：縮脖子站在水邊，偶爾伸長脖子盯水面
-    const P = K({ cap: 0x1b2433, grey: 0x8f969f, wing: 0x9ba3ac, prim: 0x6f767f, white: 0xe8ebec, under: 0xd9dde0 })
-    const b = bird({
-      L: 0.26, R: 0.095, W: 0.95, pitch: -0.5, belly: 1.1,
-      neck: { len: 0.11, r: 0.045, lean: 0.2, y: 0.3, z: 0.36, base: 1.25 },
-      head: { r: 0.043, long: 1.1, w: 0.85 },
-      bill: { len: 0.07, w: 0.013, h: 0.016, curve: 0.005, c1: 0x141414 },
-      eye: { r: 0.0085, iris: 0xc81c22, fwd: 0.4, x: 0.76 },
-      wing: { len: 0.24, h: 0.08, y: 0.35 },
-      tail: { len: 0.09, w: 0.07, cock: 0 },
-      legs: { tib: 0.09, tar: 0.085, r: 0.0065, c: 0xd2bf48, thigh: 0xd8dcde, toe: 0.055, x: 0.036 },
-      paint: {
-        body: (o, u, s) => { o.copy(P.grey).lerp(P.cap, ss(s, 0.05, 0.3) * ss(u, 0.35, 0.5)); o.lerp(P.under, ss(-s, -0.25, 0.1)) },
-        wing: (o, u, s) => o.copy(P.wing).lerp(P.prim, ss(u, 0.6, 0.75)).lerp(P.white, 0.25 * ss(-s, 0.7, 0.95)),
-        tail: solid(P.grey),
-        neck: (o, u, s) => o.copy(P.white).lerp(P.under, ss(s, 0.3, 0.8)),
-        head: (o, u, s, c, q) => {
-          o.copy(P.white)
-          const cap = ss(q.y, 0.1, 0.25)
-          const brow = ss(q.z, 0.35, 0.55) * ss(q.y, 0.15, 0.3) * (1 - ss(q.y, 0.45, 0.6))
-          o.lerp(P.cap, cap * (1 - brow))
-        },
-      },
-      extra: ({ head, hr, hy, hz }) => {
-        // 兩根白色長飾羽，從後腦垂到背上
-        for (const sx of [1, -1]) head.add(loft([[sx * hr * 0.1, hy + hr * 0.5, hz - hr * 0.6, hr * 0.06, hr * 0.06], [sx * hr * 0.2, hy + hr * 0.1, hz - hr * 2.4, hr * 0.05, hr * 0.04], [sx * hr * 0.25, hy - hr * 1.0, hz - hr * 4.2, hr * 0.03, hr * 0.02], [sx * hr * 0.25, hy - hr * 1.7, hz - hr * 5.0, hr * 0.005, hr * 0.005]], solid(P.white), { seg: 6 }))
-      },
-    })
-    return groundBird(b, 2.4, env, {
-      shadow: 0.12, radius: 0.7, speed: 0.22, turn: 1.2, stride: 0.13, lift: 0.04, focusY: 0.8, minWalk: 0.3,
-      acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1, 99, 99], turn: [1, 99, 99], strike: [0.6, 1.6, 1.6], look: [2, 1.5, 3], preen: [0.6, 2, 3.5] },
-      pose(a, tg, add, t) {
-        const k = a.k
-        tg.stretch = -0.35; tg.hp = 0.05
-        switch (a.name) {
-          case 'walk': case 'turn': Object.assign(tg, { stretch: 0.1, lean: 0.3, hp: 0.3, pitch: 0.15 }); break
-          case 'hunt': Object.assign(tg, { stretch: 0.8, lean: 0.55, hp: 0.65, pitch: 0.35, yaw: 0.2 * a.r }); break
-          case 'strike':
-            if (k < 0.35) Object.assign(tg, { stretch: 0.8, lean: 0.6, hp: 0.7, pitch: 0.35 })
-            else if (k < 0.5) Object.assign(tg, { stretch: 1.3, lean: 1.3, hp: 1.3, pitch: 0.6 })
-            else Object.assign(tg, { stretch: 0.1, lean: 0.1, hp: -0.2 })
-            return k > 0.3 && k < 0.55 ? 22 : 8
-          case 'look': Object.assign(tg, { yaw: 1.1 * a.r, stretch: 0 }); break
-          case 'preen': Object.assign(tg, { stretch: 0.2, lean: -0.3, nyaw: 0.85 * a.sgn, yaw: 1.6 * a.sgn, hp: 0.9 }); add.hp = 0.12 * Math.sin(t * 8); break
-          case 'stand': tg.yaw = 0.3 * Math.sin(t * 0.3 + a.r * 3); break
-        }
-      },
-    })
-  },
+  nightheron: nightHeron,
 
   bulbul(env) {
     // 白頭翁：黑頭、後腦一大塊白斑、耳後小白點
@@ -943,8 +894,95 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
+  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
 }
+/* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
+// 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
+// 這裡先算出每根骨頭靜止時在模型座標裡的朝向，turn(骨頭, 模型座標的軸, 角度) 再換算成本地軸，
+// 所以「繞身體的上下軸轉」對每根骨頭意思都一樣。straight：一開始就把這些骨頭（例如捲起來的尾巴）拉直到某個比例。
+function rigged(name, { straight = {} } = {}) {
+  const model = cloneSkinned(GLB[name])
+  const bones = {}
+  model.traverse((o) => {
+    if (o.isBone) bones[o.name] = o
+    if (o.isMesh) {
+      o.castShadow = true; o.frustumCulled = false
+      if (o.material.isMeshBasicMaterial) o.material = new THREE.MeshStandardMaterial({ map: o.material.map, roughness: 0.75 })
+    }
+  })
+  for (const [n, k] of Object.entries(straight)) bones[n]?.quaternion.slerp(new THREE.Quaternion(), k)
+  model.updateMatrixWorld(true)
+  const mq = model.getWorldQuaternion(new THREE.Quaternion()).invert(), wq = new THREE.Quaternion()
+  for (const b of Object.values(bones)) {
+    b.userData.rest = b.quaternion.clone()
+    b.userData.inv = mq.clone().multiply(b.getWorldQuaternion(wq)).invert()   // 模型座標 → 骨頭本地
+  }
+  const _a = V(), _q = new THREE.Quaternion()
+  return {
+    model, bones,
+    reset() { for (const b of Object.values(bones)) b.quaternion.copy(b.userData.rest) },
+    turn(n, axis, angle) {
+      const b = bones[n]; if (!b || !angle) return
+      b.quaternion.multiply(_q.setFromAxisAngle(_a.copy(axis).applyQuaternion(b.userData.inv).normalize(), angle))
+    },
+  }
+}
+const AX = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) }
+
+/* ---------- 夜鷺（3D 模型，CC BY） ---------- */
+// 模型座標：頭朝 -z、y 往上、x 是左右。骨頭：body（根）→ neck → head、兩翼各兩節、兩腳 thigh → shin → foot、tail。
+// 夜鷺多半縮著脖子站在水邊不動，偶爾伸長脖子往前盯水面、很快地啄一下；走路慢慢的、腳抬很高。
+function nightHeron(env) {
+  const r = rigged('night-heron-rig')
+  const H = 0.85, k = H / 1.1
+  const root = new THREE.Group(), inner = new THREE.Group()
+  r.model.scale.setScalar(k); inner.add(r.model)
+  inner.rotation.y = Math.PI   // 頭轉到 +z
+  root.add(inner, contactShadow(0.3))
+  const w = new Walker({ radius: 0.7, speed: 0.16, turn: 1.0 })
+  w.h = env.face(sgn(), rnd(0.3, 0.8))
+  const acts = new Acts({ stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] }, (n, a) => {
+    if (n === 'walk' && !w.pick(0.25)) a.next('look')
+    if (n === 'turn') w.want = w.h + a.sgn * rnd(0.6, 2)
+  })
+  const glance = new Glance([0.6, 1.8], 0.7, 0.25)
+  const c = { lean: 0, neck: 0, head: 0, yaw: 0, phase: 0, amp: 0 }, focus = V()
+  const update = (t, dt) => {
+    acts.tick(dt)
+    const d = w.update(dt)
+    if ((acts.name === 'walk' || acts.name === 'turn') && !w.busy) acts.next()
+    c.phase += d / 0.16; c.amp = damp(c.amp, w.busy ? 1 : 0, 6, dt)
+    const n = acts.name, kk = acts.k
+    // 目標姿勢：lean 身體前傾、neck 脖子往前下伸、head 頭抬回水平
+    let lean = 0, neck = 0, head = 0, rate = 4
+    if (n === 'hunt') { lean = 0.35; neck = 0.5; head = -0.35 }
+    else if (n === 'strike') {
+      if (kk < 0.3) { lean = 0.4; neck = 0.6; head = -0.4 }
+      else if (kk < 0.45) { lean = 0.75; neck = 1.1; head = -0.2; rate = 25 }
+      else { lean = 0.1; neck = 0.1; head = 0.1; rate = 6 }
+    } else if (n === 'walk' || n === 'turn') { lean = 0.15; neck = 0.15 }
+    c.lean = damp(c.lean, lean, rate, dt); c.neck = damp(c.neck, neck, rate, dt); c.head = damp(c.head, head, rate, dt)
+    if (n === 'look' || n === 'stand') glance.update(dt)
+    c.yaw = damp(c.yaw, n === 'look' || n === 'stand' ? glance.yaw * (n === 'look' ? 1 : 0.4) : 0, 10, dt)
+    r.reset()
+    const ph = c.phase * Math.PI * 2
+    r.turn('body', AX.x, -c.lean + 0.02 * Math.sin(t * 1.3))
+    r.turn('neck', AX.x, -c.neck * 0.8); r.turn('neck', AX.y, c.yaw * 0.5)
+    r.turn('head', AX.x, -c.neck * 0.3 - c.head); r.turn('head', AX.y, c.yaw * 0.6)
+    r.turn('tail', AX.x, 0.1 * c.lean)
+    for (const [side, off] of [['L', 0], ['R', Math.PI]]) {
+      // 身體前傾時大腿往回轉，腳掌留在原地；走路時大腿前後擺、抬腳時小腿和腳掌往上收
+      const sw = Math.sin(ph + off) * c.amp, lift = Math.max(0, Math.cos(ph + off)) * c.amp
+      r.turn('thigh' + side, AX.x, c.lean + 0.35 * sw + 0.35 * lift)
+      r.turn('shin' + side, AX.x, -0.7 * lift)
+      r.turn('foot' + side, AX.x, 0.5 * lift)
+    }
+    root.position.set(w.p.x, 0.02 * Math.max(0, Math.sin(ph * 2)) * c.amp, w.p.y); root.rotation.y = w.h
+    focus.set(w.p.x, 0.6, w.p.y)
+  }
+  return { obj: root, focus, update, acts, walker: w }
+}
+
 /* ---------- 赤腹松鼠 ---------- */
 // 模型是坐著捧東西吃的姿勢。原檔沒有骨架，我們在 Blender 幫它綁了一副（models/rig/，見 README）：
 // hips → spine1 → spine2 → neck → head、兩隻手三節、兩隻後腳三節、尾巴 8 節，權重是 Blender 自動算的。
@@ -1044,59 +1082,20 @@ function squirrel(env) {
 }
 
 /* ---------- 斯文豪氏攀蜥（貼在樹幹上） ---------- */
+// 斯文豪氏攀蜥：用同屬的先島攀蜥 3D 掃描（CC0），綁了骨架（tools/rig-distance.py）。
+// 模型座標：頭朝 -x、y 往上（貼在樹上時是朝外）、z 是左右；原本尾巴捲成一圈，這裡先拉直大半。
 function lizard(env) {
-  const P = K({ base: 0x6d6a3d, dark: 0x3c3a22, stripe: 0xe0d27a, belly: 0xc3bc96, head: 0x75734a, lip: 0xd8cf9a })
-  const S = 3.7, L = 0.065
-  const root = new THREE.Group(), body = new THREE.Group()
-  body.position.y = 0.011; root.add(body)
-  body.add(loft([[0, 0, -0.036, 0.004, 0.004], [0, 0, -0.026, 0.0075, 0.0095, 0.0075], [0, 0.0005, -0.01, 0.0088, 0.011, 0.0085], [0, 0.0005, 0.008, 0.0088, 0.011, 0.0085], [0, 0, 0.022, 0.0075, 0.009, 0.0072], [0, 0, 0.034, 0.0055, 0.0065, 0.0055]],
-    (o, u, s, c, p) => {
-      o.copy(P.base).lerp(P.dark, 0.7 * ss(s, 0.3, 0.6) * ss(Math.sin(p.z * 260), 0.4, 0.8))
-      o.lerp(P.stripe, band2(s, 0.0, 0.3, 0.08) * ss(u, 0.25, 0.4) * (1 - ss(u, 0.85, 0.95)))
-      o.lerp(P.belly, ss(-s, 0.35, 0.7))
-    }, { seg: 14 }))
-  // 背上一排小棘
-  for (let i = 0; i < 11; i++) {
-    const h = 0.004 * (1 - i / 13), cone = new THREE.Mesh(new THREE.ConeGeometry(0.0012, h, 4), mat(0x4a4728, 0.8))
-    cone.position.set(0, 0.0105 + h / 2, 0.03 - i * 0.0055); cone.rotation.x = -0.4
-    body.add(cone)
-  }
-  const head = new THREE.Group()
-  head.position.set(0, 0.001, 0.034)
-  const hr = 0.0095
-  head.add(loft([[0, 0.001, -0.006, 0.55 * hr, 0.55 * hr], [0, 0.0015, 0.002, 1.05 * hr, 0.85 * hr, 0.75 * hr], [0, 0.0015, 0.01, 0.95 * hr, 0.8 * hr, 0.65 * hr], [0, 0.0005, 0.018, 0.6 * hr, 0.55 * hr, 0.45 * hr], [0, -0.0005, 0.025, 0.3 * hr, 0.3 * hr, 0.25 * hr], [0, -0.001, 0.028, 0.06 * hr, 0.06 * hr, 0.06 * hr]],
-    (o, u, s) => o.copy(P.head).lerp(P.dark, 0.4 * ss(s, 0.5, 0.9) * ss(u, 0.3, 0.5)).lerp(P.lip, ss(-s, 0.05, 0.3))))
-  for (const sx of [1, -1]) head.add(eye(0.0022, 0xb08a30, [sx * 0.0075, 0.0038, 0.008], sx, 0.1))
-  body.add(head)
-  // 尾巴
-  const tail = [], tr = [0.0055, 0.0042, 0.003, 0.002, 0.0012], tsl = 0.028
-  let parent = body
-  tr.forEach((r, i) => {
-    const sg = new THREE.Group()
-    if (i === 0) sg.position.set(0, 0, -0.034); else sg.position.z = -tsl
-    const r1 = tr[i + 1] ?? 0.0004
-    sg.add(loft([[0, 0, 0.004, r * 1.05, r * 1.1, r], [0, 0, -tsl * 0.5, (r + r1) / 2, (r + r1) / 2], [0, 0, -tsl - 0.002, r1, r1]],
-      (o, u, s, c, p) => o.copy(P.base).lerp(P.dark, 0.6 * ss(Math.sin((p.z - i * tsl) * 300), 0.3, 0.7)).lerp(P.belly, 0.6 * ss(-s, 0.4, 0.8)), { seg: 10 }))
-    parent.add(sg); tail.push(sg); parent = sg
-  })
-  // 四肢：上臂往外、前臂往下，五根細長的趾
-  const legs = [[1, 0.02, 1], [-1, 0.02, 1], [1, -0.022, -1], [-1, -0.022, -1]].map(([sx, z, fb], i) => {
-    const sh = new THREE.Group(), el = new THREE.Group(), ft = new THREE.Group()
-    sh.position.set(sx * 0.0075, -0.002, z); sh.rotation.order = 'YXZ'
-    const limb = (len, r) => { r *= 1.5; const m = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.8, r, len, 6).translate(0, len / 2, 0).rotateX(Math.PI / 2), mat(0x67653a, 0.75)); m.castShadow = true; return m }
-    sh.add(limb(0.013, 0.0024), el); el.position.z = 0.013; el.rotation.x = 0.85
-    el.add(limb(0.012, 0.002), ft); ft.position.z = 0.012; ft.rotation.x = -0.85
-    for (let k = 0; k < 5; k++) { const toe = limb(0.006 + (k === 3 ? 0.002 : 0), 0.0007); toe.rotation.y = (k - 2) * 0.32 * sx + fb * 0; ft.add(toe) }
-    root.add(sh)
-    return { sh, el, ft, sx, base: sx * (Math.PI / 2 - fb * 0.55), off: [0, 0.5, 0.5, 0][i], fb }
-  })
-  // 和 body 一起動
-  legs.forEach((l) => { root.remove(l.sh); body.add(l.sh) })
-  root.scale.setScalar(S)
+  const tails = Object.fromEntries(Array.from({ length: 10 }, (_, i) => ['tail' + i, i === 0 ? 0 : 0.85]))
+  const r = rigged('tree-lizard-rig', { straight: tails })
+  const k = 0.26 / 3.35   // 吻端到骨盆約 26 公分（比真的大一些，才看得清楚）
+  const root = new THREE.Group(), inner = new THREE.Group()
+  r.model.scale.setScalar(k); r.model.position.y = 0.6 * k
+  inner.add(r.model); inner.rotation.y = Math.PI / 2   // 頭轉到 +z
+  root.add(inner)
 
   // 樹幹表面上走：p.x 是沿圓周的弧長、p.y 是高度；heading 0 = 頭朝上
   const T = env.trunk
-  const w = new Walker({ radius: 0.75, speed: 0.75, turn: 7, center: [0, 1.75], avoid: (x, z) => Math.abs(x) > T.arc || z < 1.05 || z > 2.5 })
+  const w = new Walker({ radius: 0.75, speed: 0.6, turn: 7, center: [0, 1.75], avoid: (x, z) => Math.abs(x) > T.arc || z < 1.05 || z > 2.5 })
   w.p.set(0, 1.6); w.h = Math.random() < 0.6 ? 0 : Math.PI
   const acts = new Acts({ walk: [3, 99, 99], rest: [4, 2.5, 7], pushup: [2, 1.4, 2.4], look: [2, 1, 2.5], turn: [1.5, 99, 99] }, (n, a) => {
     if (n === 'walk' && !w.pick(0.25, 0.8)) a.next('rest')
@@ -1105,38 +1104,48 @@ function lizard(env) {
   const surf = new THREE.Group(), holder = new THREE.Group()
   surf.add(holder); holder.add(root)
   const m4 = new THREE.Matrix4(), xa = V(), ya = V(0, 0, 1), za = V(), focus = V()
-  let phase = 0, amp = 0, hy = 0, push = 0, look = 0
+  // 四隻腳：side 左 -1／右 +1（模型的 z），對角兩隻一起動
+  const LEGS = [['fl', -1, 0], ['fr', 1, 0.5], ['hl', -1, 0.5], ['hr', 1, 0]]
+  let phase = 0, amp = 0, push = 0, look = 0
   const update = (t, dt) => {
     acts.tick(dt)
     const d = w.update(dt)
     if ((acts.name === 'walk' || acts.name === 'turn') && !w.busy) acts.next()
-    phase += d / (0.1 * S); amp = damp(amp, w.busy ? 1 : 0, 14, dt)
+    phase += d / 0.16; amp = damp(amp, w.busy ? 1 : 0, 14, dt)
     const ph = phase * Math.PI * 2
-    body.rotation.y = 0.22 * Math.sin(ph) * amp
     push = damp(push, acts.name === 'pushup' ? 1 : 0, 10, dt)
     const bob = push * Math.max(0, Math.sin(t * 11))
-    body.rotation.x = -0.28 * push - 0.15 * bob
-    body.position.y = 0.011 + 0.004 * push + 0.003 * bob
-    look = damp(look, acts.name === 'look' ? acts.r * 0.6 : acts.name === 'rest' ? 0.2 * Math.sin(t * 0.4) : 0, 6, dt)
-    hy = damp(hy, -body.rotation.y * 1.2 + look, 12, dt)
-    head.rotation.set(-0.1 * push + 0.12 * bob, hy, 0, 'YXZ')
-    tail.forEach((sg, i) => { sg.rotation.y = -0.3 * Math.sin(ph - i * 0.9) * amp + 0.06 * Math.sin(t * 0.7 - i * 0.6); sg.rotation.x = 0.02 })
-    legs.forEach((l) => {
-      const c = fract(phase + l.off), duty = 0.55
+    look = damp(look, acts.name === 'look' ? acts.r * 0.6 : acts.name === 'rest' ? 0.15 * Math.sin(t * 0.4) : 0, 6, dt)
+    r.reset()
+    // 走路時身體左右扭成 S 形（在樹皮的平面上，繞朝外的 y 軸），頭維持朝前
+    const bend = 0.2 * Math.sin(ph) * amp
+    r.turn('pelvis', AX.y, -bend * 0.5); r.turn('spine1', AX.y, bend); r.turn('spine2', AX.y, bend * 0.6)
+    r.turn('neck', AX.y, -bend * 1.2 + look * 0.6); r.turn('head', AX.y, look * 0.5)
+    // 伏地挺身：前半身撐起、頭一上一下
+    r.turn('spine2', AX.z, -0.25 * push - 0.12 * bob); r.turn('neck', AX.z, -0.1 * push - 0.1 * bob)
+    // 尾巴：跟著走路左右擺；斜著爬時尾巴會橫過樹幹，每節往樹皮彎一點，才會貼著圓圓的樹幹
+    const hug = -0.7 * k / T.R * Math.abs(Math.sin(w.h)) * 1.1
+    for (let i = 0; i < 10; i++) {
+      r.turn('tail' + i, AX.y, (-0.12 * Math.sin(ph - i * 0.7) * amp + 0.03 * Math.sin(t * 0.7 - i * 0.6)) * (i < 3 ? 1 : 0.6))
+      if (i > 0) r.turn('tail' + i, AX.z, hug)
+    }
+    for (const [l, side, off] of LEGS) {
+      const c = fract(phase + off), duty = 0.55
       let sw, lift = 0
       if (c < duty) sw = 0.5 - c / duty
       else { const u = (c - duty) / (1 - duty); sw = u - 0.5; lift = Math.sin(Math.PI * u) }
-      l.sh.rotation.y = l.base - l.sx * sw * 0.9 * amp
-      l.sh.rotation.x = 0.12 - 0.5 * lift * amp - (l.fb > 0 ? 0.25 * push : 0)
-    })
+      r.turn(l + '0', AX.y, -side * sw * 0.8 * amp)            // 前後擺
+      r.turn(l + '0', AX.x, -side * 0.5 * lift * amp)          // 抬腳
+      if (l[0] === 'f') r.turn(l + '0', AX.x, side * 0.3 * push)   // 伏地挺身時前腳撐直
+    }
     // 擺到樹幹表面：holder 的 +y 朝外、+z 是頭的方向
     surf.rotation.y = w.p.x / T.R
-    holder.position.set(0, w.p.y, T.R + 0.004)
+    holder.position.set(0, w.p.y, T.R + 0.004 + 0.012 * push)
     za.set(Math.sin(w.h), Math.cos(w.h), 0); xa.crossVectors(ya, za)
     holder.quaternion.setFromRotationMatrix(m4.makeBasis(xa, ya, za))
     focus.set(0, w.p.y, T.R)
   }
-  return { obj: surf, focus, update }
+  return { obj: surf, focus, update, acts }
 }
 
 /* ---------- 池塘烏龜：一隻在石頭上曬太陽（斑龜的近親 3D 掃描），一隻在水裡游（紅耳龜 3D 掃描） ---------- */
