@@ -52,7 +52,7 @@ elif kind in ('bulbul', 'whiteeye', 'treepie'):
 elif kind in ('dove', 'heron', 'barbet2'):
     # 保留生成腳的鳥（Tripo 生成，頭朝 -x；五色鳥第二版也是）：保留生成的腳，綁 thigh → shin → foot。點位從命令列 JSON 傳入。
     q = EXTRA[kind]
-    p3 = lambda xy, z=0: (xy[0], xy[1], z)
+    p3 = lambda xy, z=0: (xy[0], xy[1], xy[2] if len(xy) > 2 else z)   # 腳的點可以直接給 (x, y, z)，腳是斜的
     if 'neck' in q:
         # 身體分兩節（body → chest）、脖子三節（neck → neck2 → neck3），伸脖子時三節一起拉長，頭整顆剛性
         nk = q['neck']
@@ -119,6 +119,9 @@ for v in ob.data.vertices:
     tail = lambda n: n.startswith('tail') and n[4:].isdigit() and int(n[4:]) >= 2
     if leg(ds[0][1]): ds = [d for d in ds if not tail(d[1])]
     elif tail(ds[0][1]): ds = [d for d in ds if not leg(d[1])]
+    # 鳥腳：最近的是哪一隻腳就只跟那隻腳（和身體）混，不然抬一隻腳另一隻的皮也被拉走
+    side = lambda n: n[-1] if n[:-1] in ('thigh', 'shin', 'foot') else None
+    if side(ds[0][1]): ds = [d for d in ds if side(d[1]) in (None, side(ds[0][1]))]
     ds = ds[:3]
     ws = [(1.0 / (d ** 4 + 1e-6), n) for d, n in ds]
     tot = sum(w for w, _ in ws)

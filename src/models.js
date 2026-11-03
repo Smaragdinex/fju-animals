@@ -349,16 +349,24 @@ function groundTripo(env, cfg) {
   const N = FWD.clone().cross(AX.y).normalize()   // 繞 N 轉 = 在側面平面裡從 FWD 轉向上
   const mp = (b, out = V()) => r.model.worldToLocal(r.bones[b].getWorldPosition(out))
   const ang = (a, b) => Math.atan2(b.y - a.y, _d.subVectors(b, a).dot(FWD))
-  const _d = V(), _t = V(), _q = new THREE.Quaternion(), _p = new THREE.Quaternion()
+  const _d = V(), _t = V(), _q = new THREE.Quaternion(), _p = new THREE.Quaternion(), _r = new THREE.Quaternion(), _m = new THREE.Quaternion()
+  // 在模型座標裡繞 axis 轉骨頭（身體前傾、側傾之後也準；r.turn 的軸是以靜止姿勢算的）
+  const modelQ = (o, out) => out.copy(_m.copy(r.model.getWorldQuaternion(_m)).invert()).multiply(o.getWorldQuaternion(_r))
+  const rotM = (bn, axis, a) => {
+    const b = r.bones[bn], pm = modelQ(b.parent, new THREE.Quaternion()), bm = modelQ(b, new THREE.Quaternion())
+    b.quaternion.copy(pm.invert().multiply(_q.setFromAxisAngle(axis, a).multiply(bm)))
+    b.updateWorldMatrix(false, true)
+  }
   r.model.updateWorldMatrix(true, true)
   const legs = ['L', 'R'].map((sd) => {
     const hip = mp('thigh' + sd), knee = mp('shin' + sd), ankle = mp('foot' + sd)
     const a = knee.clone().sub(hip), b = ankle.clone().sub(knee)
     const bend = Math.sign(a.dot(FWD) * b.y - a.y * b.dot(FWD))
-    return { sd, rest: ankle, L1: a.length(), L2: b.length(), bend, flat: r.bones['foot' + sd].userData.inv.clone().invert(),
+    // 腳是斜的（往外張），IK 在側面平面裡算，所以骨長也要用投影到側面的長度
+    return { sd, rest: ankle, L1: Math.hypot(a.dot(FWD), a.y), L2: Math.hypot(b.dot(FWD), b.y), bend, flat: r.bones['foot' + sd].userData.inv.clone().invert(),
       plant: null, from: V(), to: V(), t: 1, pos: V() }
   })
-  const stride = cfg.stride ?? 0.22 * cfg.H, lift = cfg.lift ?? 0.08 * cfg.H, swing = cfg.swingT ?? 0.32
+  const stride = cfg.stride ?? 0.22 * cfg.H, lift = cfg.lift ?? 0.1 * cfg.H, swing = cfg.swingT ?? 0.32
   const ik = (L, target) => {
     const hip = mp('thigh' + L.sd), tg = r.model.worldToLocal(_t.copy(target))
     const du = _d.subVectors(tg, hip).dot(FWD), dv = tg.y - hip.y
@@ -368,16 +376,15 @@ function groundTripo(env, cfg) {
     let want = base + al
     const kx = Math.cos(want) * L.L1, ky = Math.sin(want) * L.L1
     if (Math.sign(kx * (dv - ky) - ky * (du - kx)) !== L.bend) want = base - al
-    r.turn('thigh' + L.sd, N, want - ang(hip, mp('shin' + L.sd)))
-    r.bones['thigh' + L.sd].updateWorldMatrix(false, true)
+    rotM('thigh' + L.sd, N, want - ang(hip, mp('shin' + L.sd)))
     const knee = mp('shin' + L.sd)
-    r.turn('shin' + L.sd, N, ang(knee, tg) - ang(knee, mp('foot' + L.sd)))
-    r.bones['shin' + L.sd].updateWorldMatrix(false, true)
+    rotM('shin' + L.sd, N, ang(knee, tg) - ang(knee, mp('foot' + L.sd)))
     // 腳掌：回到模型座標裡原本的角度（貼平），抬腳時腳趾往下垂
     const fb = r.bones['foot' + L.sd]
     _p.copy(r.model.getWorldQuaternion(_q)).invert().multiply(fb.parent.getWorldQuaternion(_q)).invert()
     fb.quaternion.copy(_p.multiply(L.flat))
-    r.turn('foot' + L.sd, N, 0.7 * Math.sin(Math.PI * L.t) * (L.t < 1))
+    fb.updateWorldMatrix(false, true)
+    if (L.t < 1) rotM('foot' + L.sd, N, 0.3 * Math.sin(Math.PI * L.t))
   }
   const update = (t, dt) => {
     acts.tick(dt)
@@ -460,13 +467,13 @@ function nightHeron(env) {
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
 function malayanHeron(env) {
   return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1,
-    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.38, focusY: 0.5,
+    walk: { radius: 1.6, speed: 0.2 }, step: 0.17, swingT: 0.4, lift: 0.12, focusY: 0.5,
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
   return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.46, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.25, shadow: 0.18,
-    walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.15, focusY: 0.3,
+    walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.16, lift: 0.04, focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
 
