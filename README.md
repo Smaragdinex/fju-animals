@@ -10,6 +10,10 @@ python3 fju-animals/serve.py 8794
 
 打開 http://localhost:8794/ 。serve.py 會關掉快取，改完 JS 重新整理就會生效。
 
+## 線上版
+
+https://smaragdinex.github.io/fju-animals/ （GitHub Pages，repo `Smaragdinex/fju-animals`）。push 到 main 約 1 分鐘後更新；手機上看要加 `?cb=任意數字` 繞過快取。
+
 ## 結構
 
 - `campus.json`：校園地圖，由 `data/convert.py` 從 `data/area.json`（OpenStreetMap 原始資料）轉成公尺座標。原點在校園中心，x 向東、z 向南。
