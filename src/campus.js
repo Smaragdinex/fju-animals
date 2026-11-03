@@ -1,0 +1,296 @@
+// 由 campus.json（OpenStreetMap 轉出來的公尺座標）長出校園：地面、草地、樹林、道路、建築、池塘、樹。
+import * as THREE from 'three'
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
+import { buildGround, bakeGround } from './ground.js'
+
+export const WATER_Y = 0.12
+
+const rand = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647) })()
+
+export function inside([x, z], poly) {
+  let c = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [x1, z1] = poly[i], [x2, z2] = poly[j]
+    if ((z1 > z) !== (z2 > z) && x < ((x2 - x1) * (z - z1)) / (z2 - z1) + x1) c = !c
+  }
+  return c
+}
+function bbox(pts) {
+  let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity
+  for (const [x, z] of pts) { a = Math.min(a, x); b = Math.min(b, z); c = Math.max(c, x); d = Math.max(d, z) }
+  return [a, b, c, d]
+}
+function area(pts) {
+  let s = 0
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]
+  return Math.abs(s / 2)
+}
+
+// 多邊形往內縮 d 公尺（女兒牆用）；縮壞了回傳 null
+function inset(pts, d) {
+  let s = 0
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]
+  const sgn = s > 0 ? 1 : -1
+  const n = pts.length, out = []
+  for (let i = 0; i < n; i++) {
+    const a = pts[(i + n - 1) % n], b = pts[i], c = pts[(i + 1) % n]
+    const e1 = norm(b[0] - a[0], b[1] - a[1]), e2 = norm(c[0] - b[0], c[1] - b[1])
+    const n1 = [-e1[1] * sgn, e1[0] * sgn], n2 = [-e2[1] * sgn, e2[0] * sgn]
+    const m = norm(n1[0] + n2[0], n1[1] + n2[1])
+    const cos = m[0] * n1[0] + m[1] * n1[1]
+    if (cos < 0.35) return null
+    out.push([b[0] + m[0] * d / cos, b[1] + m[1] * d / cos])
+  }
+  return inside(centroid(out), pts) ? out : null
+}
+const norm = (x, z) => { const L = Math.hypot(x, z) || 1; return [x / L, z / L] }
+const centroid = (pts) => [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length]
+
+// 天空漸層做成環境貼圖，水面拿來反射
+let _env
+function skyEnv() {
+  if (_env) return _env
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `varying vec3 vP; void main(){ float h = normalize(vP).y;
+      vec3 c = mix(vec3(0.80, 0.86, 0.86), vec3(0.42, 0.62, 0.82), smoothstep(0.0, 0.6, h));
+      c = mix(vec3(0.35, 0.40, 0.33), c, smoothstep(-0.05, 0.02, h));
+      gl_FragColor = vec4(c, 1.0); }`,
+  }))
+  const s = new THREE.Scene(); s.add(sky)
+  const gen = new THREE.PMREMGenerator(_renderer)
+  _env = gen.fromScene(s).texture
+  gen.dispose()
+  return _env
+}
+let _renderer
+export const useRenderer = (r) => { _renderer = r }
+
+// 平面多邊形（躺在 y 高度）
+function flatShape(pts, y) {
+  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)))
+  const g = new THREE.ShapeGeometry(shape)
+  g.rotateX(-Math.PI / 2)
+  g.translate(0, y, 0)
+  return g
+}
+// 折線拉成帶子
+function ribbon(pts, w, y) {
+  const P = [], I = []
+  const n = pts.length
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)]
+    let dx = b[0] - a[0], dz = b[1] - a[1]
+    const L = Math.hypot(dx, dz) || 1
+    dx /= L; dz /= L
+    const [x, z] = pts[i]
+    P.push(x - dz * w / 2, y, z + dx * w / 2, x + dz * w / 2, y, z - dx * w / 2)
+    if (i > 0) { const k = i * 2; I.push(k - 2, k, k - 1, k - 1, k, k + 1) }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3))
+  g.setIndex(I)
+  g.computeVertexNormals()
+  return g
+}
+
+export async function buildCampus(scene) {
+  const data = await (await fetch('campus.json')).json()
+  const inCampus = (p) => data.boundary.some((r) => inside(p, r))
+
+  /* 地面：草地、樹林、球場、道路、池塘都畫在同一張貼圖上 */
+  const ground = buildGround(scene, data)
+
+  /* 池塘水面 + 一圈石砌池岸 */
+  // 水面：反射天空（只給水用的環境貼圖，其他材質不受影響）
+  const waterMat = new THREE.MeshStandardMaterial({ color: 0x24515c, roughness: 0.06, metalness: 0, transparent: true, opacity: 0.9, envMap: skyEnv(), envMapIntensity: 1.2 })
+  for (const p of data.areas.filter((a) => a.kind === 'water')) {
+    scene.add(new THREE.Mesh(flatShape(p.pts, WATER_Y), waterMat))
+    const edge = new THREE.Mesh(ribbon([...p.pts, p.pts[0]], 0.8, 0.2), new THREE.MeshStandardMaterial({ color: 0xa79f8f, roughness: 1 }))
+    edge.castShadow = edge.receiveShadow = true
+    scene.add(edge)
+  }
+
+  /* 建築：擠出成方塊；每層樓一圈窗帶 */
+  const bGeos = [], bMeta = [], dGeos = []
+  const tint = (g, c) => {
+    g = g.index ? g.toNonIndexed() : g
+    const a = new Float32Array(g.attributes.position.count * 3)
+    for (let i = 0; i < a.length; i += 3) c.toArray(a, i)
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3))
+    g.deleteAttribute('uv')
+    return g
+  }
+  for (const b of data.buildings) {
+    if (b.pts.length < 3 || area(b.pts) < 12) continue
+    let h = b.h ?? (b.kind === 'university' || b.kind === 'college' || b.kind === 'dormitory' ? 14.4 : b.kind === 'roof' ? 4 : 7.2)
+    if (b.kind === 'roof') h = Math.min(h, 4.5)
+    const shape = new THREE.Shape(b.pts.map(([x, z]) => new THREE.Vector2(x, -z)))
+    const g = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false })
+    g.rotateX(-Math.PI / 2)
+    // 頂點色：校內白牆、校外灰；屋頂另一色
+    const col = new THREE.Color(), roof = new THREE.Color()
+    if (b.in) { col.setHSL(0.11, 0.18, 0.86 + rand() * 0.06); roof.setHSL(0.08, 0.12, 0.62 + rand() * 0.08) }
+    else { col.setHSL(0.1, 0.05, 0.72 + rand() * 0.08); roof.setHSL(0, 0, 0.6) }
+    if (b.kind === 'chapel' || /淨心堂/.test(b.name || '')) { col.setHSL(0.08, 0.25, 0.9); roof.setHSL(0.03, 0.45, 0.45) }
+    const n = g.attributes.normal, cArr = new Float32Array(n.count * 3)
+    for (let i = 0; i < n.count; i++) (n.getY(i) > 0.5 ? roof : col).toArray(cArr, i * 3)
+    g.setAttribute('color', new THREE.BufferAttribute(cArr, 3))
+    bGeos.push(g)
+    bMeta.push({ ...b, h })
+    // 屋頂女兒牆：外框往內縮 0.35 公尺挖空，高 1 公尺
+    const ar = area(b.pts)
+    if (ar > 60 && b.kind !== 'roof') {
+      const hole = inset(b.pts, 0.35)
+      if (hole) {
+        const sh = new THREE.Shape(b.pts.map(([x, z]) => new THREE.Vector2(x, -z)))
+        sh.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z))))
+        const pg = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, h, 0)
+        dGeos.push(tint(pg, col))
+      }
+    }
+    // 屋頂上的樓梯間／機房
+    if (b.in && ar > 400 && h > 8) {
+      const bb = bbox(b.pts), cx = (bb[0] + bb[2]) / 2, cz = (bb[1] + bb[3]) / 2
+      const w = 4 + rand() * 3, d = 3.5 + rand() * 2, hh = 2.6 + rand()
+      const ok = [[-1, -1], [1, -1], [1, 1], [-1, 1]].every(([sx, sz]) => inside([cx + sx * (w / 2 + 1), cz + sz * (d / 2 + 1)], b.pts))
+      if (ok) dGeos.push(tint(new THREE.BoxGeometry(w, hh, d).translate(cx, h + hh / 2, cz), col))
+    }
+  }
+  const bMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 })
+  bMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\nvarying float vWall;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWall = 1.0 - step(0.5, abs(normal.y));')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\nvarying float vWall;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float fl = fract(vWp.y / 3.6);
+        float band = step(0.38, fl) * step(fl, 0.78) * step(1.2, vWp.y);
+        float mull = step(0.12, fract((vWp.x + vWp.z) / 2.4));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.36, 0.46, 0.52), band * mull * vWall * 0.85);
+        // 牆腳：一圈深色基座，越靠近地面越暗（地面反射被擋住的效果）
+        diffuseColor.rgb *= mix(1.0, 0.72, vWall * step(vWp.y, 0.7));
+        diffuseColor.rgb *= mix(0.68, 1.0, smoothstep(0.0, 5.0, vWp.y));`)
+  }
+  const buildings = new THREE.Mesh(mergeGeometries(bGeos), bMat)
+  buildings.castShadow = buildings.receiveShadow = true
+  scene.add(buildings)
+  const detMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 })
+  const details = new THREE.Mesh(mergeGeometries(dGeos.map((g) => { g.deleteAttribute('uv'); return g })), detMat)
+  details.castShadow = details.receiveShadow = true
+  scene.add(details)
+
+  /* 樹：樹林密、公園中等、草地零星、行道樹沿線 */
+  const bIndex = bMeta.map((b) => ({ bb: bbox(b.pts), pts: b.pts }))
+  const nearBuilding = ([x, z], m = 2) => bIndex.some(({ bb, pts }) =>
+    x > bb[0] - m && x < bb[2] + m && z > bb[1] - m && z < bb[3] + m &&
+    (inside([x, z], pts) || inside([x + m, z], pts) || inside([x - m, z], pts) || inside([x, z + m], pts) || inside([x, z - m], pts)))
+  const roadIndex = data.roads.filter((r) => r.kind !== 'footway' && r.kind !== 'steps')
+  const onRoad = ([x, z]) => roadIndex.some((r) => {
+    for (let i = 1; i < r.pts.length; i++) {
+      const [ax, az] = r.pts[i - 1], [bx, bz] = r.pts[i]
+      const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2))
+      if (Math.hypot(x - ax - dx * t, z - az - dz * t) < r.w / 2 + 1.5) return true
+    }
+    return false
+  })
+  const trees = []
+  const keepClear = []   // 動物地點周圍留空，鏡頭才看得到
+  const scatter = (pts, perM2) => {
+    const bb = bbox(pts)
+    const n = Math.round(area(pts) * perM2)
+    for (let i = 0, got = 0; i < n * 4 && got < n && trees.length < 9000; i++) {
+      const p = [bb[0] + rand() * (bb[2] - bb[0]), bb[1] + rand() * (bb[3] - bb[1])]
+      if (inside(p, pts)) { trees.push(p); got++ }
+    }
+  }
+  for (const a of data.areas) {
+    if (a.kind === 'wood') scatter(a.pts, 1 / 45)
+    else if (a.kind === 'park') scatter(a.pts, 1 / 110)
+    else if (a.kind === 'grass') scatter(a.pts, 1 / 900)
+  }
+  for (const row of data.treeRows) {
+    for (let i = 1; i < row.length; i++) {
+      const [ax, az] = row[i - 1], [bx, bz] = row[i]
+      const L = Math.hypot(bx - ax, bz - az)
+      for (let d = 0; d < L; d += 8) trees.push([ax + (bx - ax) * d / L, az + (bz - az) * d / L])
+    }
+  }
+
+  return {
+    data, buildings: bMeta, inCampus, ground,
+    bake: (renderer, sunDir) => bakeGround(renderer, scene, ground, sunDir),
+    // 動物地點決定好後再種樹，避開地點周圍
+    plantTrees(clearSpots) {
+      keepClear.push(...clearSpots)
+      const ok = trees.filter((p) => !nearBuilding(p) && !onRoad(p) && !keepClear.some(([x, z, r]) => Math.hypot(p[0] - x, p[1] - z) < r))
+      scene.add(makeTrees(ok))
+      return ok.length
+    },
+  }
+}
+
+/* 樹：樹幹分兩枝 + 四五團有起伏的樹冠，樹冠下緣壓暗 */
+let _canopy
+export function canopyGeometry() {
+  if (_canopy) return _canopy
+  let g = new THREE.IcosahedronGeometry(1, 3)
+  g.deleteAttribute('normal'); g.deleteAttribute('uv')
+  g = mergeVertices(g)
+  const p = g.attributes.position, col = new Float32Array(p.count * 3), v = new THREE.Vector3()
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i)
+    // 一團團的葉簇：幾個不同頻率的起伏疊起來
+    const bump = Math.sin(v.x * 5.1 + 1.3) * Math.sin(v.y * 4.7 + 0.4) * Math.sin(v.z * 5.3 + 2.1) * 0.13
+      + Math.sin(v.x * 11 + v.z * 7) * Math.sin(v.y * 9 + 1) * 0.04
+    v.multiplyScalar(1 + bump)
+    if (v.y < 0) v.y *= 0.75     // 底部比較平
+    p.setXYZ(i, v.x, v.y, v.z)
+    const k = THREE.MathUtils.lerp(0.55, 1.08, THREE.MathUtils.smoothstep(v.y, -0.8, 0.9))
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = k
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3))
+  g.computeVertexNormals()
+  return (_canopy = g)
+}
+export function treeParts() {
+  const stem = new THREE.CylinderGeometry(0.16, 0.26, 1, 8).translate(0, 0.5, 0)
+  const fork = (a, b) => new THREE.CylinderGeometry(0.06, 0.12, 0.45, 6).translate(0, 0.225, 0).rotateZ(a).rotateY(b).translate(0, 0.72, 0)
+  const trunk = mergeGeometries([stem, fork(0.6, 0), fork(0.55, 2.3), fork(0.5, 4.2)])
+  return { trunk, blob: canopyGeometry() }
+}
+function makeTrees(pts) {
+  const { trunk, blob } = treeParts()
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6d5544, roughness: 1 })
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, vertexColors: true })
+  const tI = new THREE.InstancedMesh(trunk, trunkMat, pts.length)
+  const lI = new THREE.InstancedMesh(blob, leafMat, pts.length * 5)
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color()
+  let li = 0
+  pts.forEach(([x, z], i) => {
+    const H = 5 + rand() * 6, R = 2.2 + rand() * 2
+    q.setFromEuler(new THREE.Euler(0, rand() * 6.28, 0))
+    m.compose(p.set(x, 0, z), q, s.set(0.7 + H / 22, H * 0.62, 0.7 + H / 22))
+    tI.setMatrixAt(i, m)
+    const hue = 0.24 + rand() * 0.08, lig = 0.3 + rand() * 0.12
+    const k = 3 + (rand() < 0.5 ? 1 : 0) + (R > 3.4 ? 1 : 0)
+    for (let j = 0; j < k; j++) {
+      const a = (j / k) * Math.PI * 2 + rand(), d = j === 0 ? 0 : R * (0.45 + rand() * 0.15)
+      q.setFromEuler(new THREE.Euler(rand() * 0.4, rand() * 6.28, rand() * 0.4))
+      const r = R * (j === 0 ? 0.95 : 0.6 + rand() * 0.2)
+      m.compose(p.set(x + Math.cos(a) * d, H * 0.62 + R * 0.5 + (j ? (rand() - 0.3) * R * 0.5 : R * 0.15), z + Math.sin(a) * d), q, s.set(r, r * 0.8, r))
+      lI.setMatrixAt(li, m)
+      lI.setColorAt(li, c.setHSL(hue + (rand() - 0.5) * 0.02, 0.45, lig + (rand() - 0.5) * 0.05))
+      li++
+    }
+  })
+  lI.count = li
+  tI.castShadow = lI.castShadow = true
+  tI.receiveShadow = lI.receiveShadow = true
+  const g = new THREE.Group()
+  g.add(tI, lI)
+  return g
+}

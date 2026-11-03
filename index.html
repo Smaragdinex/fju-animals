@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>輔大的動物鄰居</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.174.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="labels"></div>
+<nav id="dots" aria-label="動物列表"></nav>
+<main id="story"></main>
+<div id="loading">校園載入中…</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

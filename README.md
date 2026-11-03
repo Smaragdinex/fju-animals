@@ -1,0 +1,35 @@
+# 輔大的動物鄰居
+
+用 3D 輔仁大學校園模型介紹校園裡的 10 種動物。往下捲動，鏡頭會依序飛到每種動物大概出沒的地點，旁邊顯示簡介卡。
+
+## 執行
+
+```bash
+python3 fju-animals/serve.py 8794
+```
+
+打開 http://localhost:8794/ 。serve.py 會關掉快取，改完 JS 重新整理就會生效。
+
+## 結構
+
+- `campus.json`：校園地圖，由 `data/convert.py` 從 `data/area.json`（OpenStreetMap 原始資料）轉成公尺座標。原點在校園中心，x 向東、z 向南。
+- `src/ground.js`：地面。草地、樹林、球場、道路、池塘全部畫進一張貼圖（不再一層層疊平面，所以不會閃爍）；載入時把陽光陰影和天光遮蔽**烘焙**進另一張貼圖，地面之後不再即時算陰影。桌機 4096、手機 2048。
+- `src/campus.js`：建築（含女兒牆、屋頂機房、牆腳壓暗）、高模樹、荷花池水面。
+- `src/animals.js`：10 種動物的文字介紹、地點（`spot`）、停棲方式和鏡頭方位。**改地點或文案都在這裡。**
+- `src/models.js`：動物模型與行為，以及樹枝、樹幹、石頭等停棲處。模型是沿脊線「放樣」出的平滑身體（`loft`），羽色花紋畫在頂點色上；腳用兩節 IK 踩地。鳥的脖子是每格重新排的管子（`flexNeck`），沿身體到頭的曲線彎成 S 形或伸直；頭的位置和朝向獨立決定，所以身體晃動時頭能保持穩定。鳥會眨眼。行為：地上的鳥會走動、覓食（`Walker` + `Acts` 動作表），枝上的鳥沿枝條跳（`Hopper`），松鼠在枝上跑、坐著啃東西，攀蜥在樹幹上爬、做伏地挺身，烏龜一隻曬太陽、一隻在水裡游。動物不烘進地面，地上的鳥自帶即時陰影。
+- `src/main.js`：捲動與鏡頭的對應、燈光（西南斜陽 + 近景補光）、地點標籤（會互相避開）、右側導覽點。除錯可設 `__fju.view = { pos: [x,y,z], target: [x,y,z] }` 固定鏡頭。`__fju.pause = true` 讓動物停住。
+
+## 要重新抓地圖
+
+```bash
+curl -A "fju-animals" https://maps.mail.ru/osm/tools/overpass/api/interpreter \
+  --data-urlencode 'data=[out:json][timeout:90];(way(25.0320,121.4280,25.0412,121.4368);relation(id:10830273););out geom;' \
+  -o fju-animals/data/area.json
+python3 fju-animals/data/convert.py
+```
+
+## 授權與注意
+
+- 地圖資料 © OpenStreetMap contributors（ODbL），網頁結尾已標示來源。
+- 衛星空拍圖有版權，只能拿來對照，不放進網站。
+- 動物地點是依照地圖上草地、樹林、池塘挑的大概位置，還需要熟悉輔大的人確認。
