@@ -408,11 +408,21 @@ function groundTripo(env, cfg) {
     curlToes(r, L.toes, sw ? 0.9 * Math.sin(Math.PI * Math.min(1, sw / 0.85)) - 0.15 * ss(sw, 0.8, 1) : 0)
   }
   // 蚯蚓：每格用目前嘴尖的位置重排一條管子。拔的時候一端還在土裡、被拉長；拔出來後掛在嘴上扭，吞的時候越來越短
-  let wormMesh = null, wormOn = false, caught = false
-  const anchor = V(), _tip = V(), wormMat = new THREE.MeshStandardMaterial({ color: 0xb8675c, roughness: 0.45, emissive: 0x2a0d08 })
+  let wormMesh = null, wormOn = false, caught = false, skin = null, tipIdx = -1
+  // 嘴尖：模型上最往前的那個頂點（只看上半身），每格用蒙皮後的位置，蚯蚓才真的夾在嘴裡
+  if (cfg.worm) {
+    r.model.traverse((o) => { if (o.isSkinnedMesh) skin = o })
+    const p = skin.geometry.attributes.position, v = V(), H = skin.geometry.boundingBox ?? (skin.geometry.computeBoundingBox(), skin.geometry.boundingBox)
+    let best = Infinity
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); if (v.y > H.max.y * 0.6 && v.dot(FWD) < best) { best = v.dot(FWD); tipIdx = i } }
+  }
+  const anchor = V(), _tip = V(), _hd = V(), wormMat = new THREE.MeshStandardMaterial({ color: 0xb8675c, roughness: 0.45, emissive: 0x2a0d08 })
   const worm = (n, kk, t) => {
     if (n !== 'worm' || kk < 0.18) { wormOn = false; if (wormMesh) wormMesh.visible = false; return }
-    const tip = r.bones.head.localToWorld(_tip.set(0, cfg.bill, 0))
+    r.bones.head.updateWorldMatrix(true, true)
+    const tip = skin.getVertexPosition(tipIdx, _tip).applyMatrix4(skin.matrixWorld)
+    // 往頭的方向縮 1.5 公分：夾在上下喙之間，不是黏在尖端外面
+    tip.addScaledVector(r.bones.head.getWorldPosition(_hd).sub(tip).normalize(), 0.015)
     if (!wormOn) { wormOn = true; caught = Math.random() < 0.75; anchor.set(tip.x, 0.004, tip.z) }
     if (!caught || kk > 0.97) { if (wormMesh) wormMesh.visible = false; return }
     const pts = [], N = 12, L = 0.15
