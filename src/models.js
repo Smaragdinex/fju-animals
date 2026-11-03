@@ -478,9 +478,10 @@ function groundTripo(env, cfg) {
   }
   return { obj: root, focus, update, acts, walker: w, legs }
 }
-// 夜鷺（Sketchfab 模型，CC BY）：頭朝 -z
+// 夜鷺（ChatGPT 參考圖 → Tripo，跟黑冠麻鷺一樣綁法：脖子三節、頭剛性、腳趾）：站著等、慢慢走、很快啄下去
 function nightHeron(env) {
-  return groundTripo(env, { name: 'night-heron-rig', H: 0.85, h0: 1.1, rotY: Math.PI, lat: AX.x, fwd: AX.z,
+  return groundTripo(env, { name: 'night-heron-rig', H: 0.8, h0: 0.83, rotY: Math.PI / 2, lat: V(0, 0, -1), reach: 0.8, shadow: 0.3,
+    walk: { radius: 0.7, speed: 0.18 }, swingT: 0.42, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
     acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] } })
 }
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
@@ -491,7 +492,7 @@ function malayanHeron(env) {
 }
 // 珠頸斑鳩（ChatGPT 參考圖 → Tripo）：邊走邊點頭、啄地上的種子
 function spottedDove(env) {
-  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.46, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.25, shadow: 0.18,
+  return groundTripo(env, { name: 'dove-rig', H: 0.36, h0: 0.53, rotY: Math.PI / 2, lat: V(0, 0, -1), bob: 0.25, shadow: 0.18,
     walk: { radius: 1.2, speed: 0.22 }, step: 0.09, swingT: 0.18, lift: 0, knee: [0.6, 1.2], focusY: 0.3,
     acts: { walk: [4, 99, 99], peck: [3, 0.9, 1.3], look: [2, 1.2, 2.5], stand: [1.5, 1.5, 3], turn: [1, 99, 99] } })
 }
