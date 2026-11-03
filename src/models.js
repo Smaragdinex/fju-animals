@@ -958,31 +958,57 @@ function nightHeron(env) {
 function barbet(env) {
   const r = rigged('barbet-rig')
   const k = 0.62, LAT = V(-0.47, 0, 0.88).normalize()
-  const root = new THREE.Group(), inner = new THREE.Group()
-  r.model.scale.setScalar(k); r.model.position.set(-0.08 * k, -0.545 * k, -0.03 * k)
+  // 模型的腳在切枯枝時一起切掉了，另外補兩隻腳（兩節 IK + 四趾，灰綠色）。身體抬高一個腳長，腳掌抓在枝上。
+  const LEG = { tib: 0.05, tar: 0.031 }, LH = 0.05, HIPX = 0.022, HIP_IN = 0.025   // 髖關節埋進肚子裡
+  const root = new THREE.Group(), lift = new THREE.Group(), inner = new THREE.Group()
+  r.model.scale.setScalar(k); r.model.position.set(-0.08 * k, -0.545 * k + 0.006, -0.03 * k)
   inner.add(r.model); inner.rotation.y = 2.07   // 頭轉到 +z
-  root.add(inner)
-  const hp = new Hopper(env, { rest: [2, 7] })
+  lift.add(inner); root.add(lift)
+  const legs = [1, -1].map((sx) => {
+    const l = makeLeg({ a: LEG.tib, b: LEG.tar, ra: 0.0075, rb: 0.0042, ca: 0x4e5a45, cb: 0x56614f, bend: 1, x: sx * HIPX })
+    birdFoot(l, 0.0042, 0.022, 0x4f5a4a)
+    root.add(l.hip)
+    return l
+  })
+  const hp = new Hopper(env, { rest: [2, 7], dur: 0.32 })
   const gl = new Glance([0.5, 1.6], 0.8, 0.3)
   const acts = new Acts({ idle: [4, 2, 5], call: [3, 2, 4], preen: [0.8, 1.5, 3] })
-  const c = { yaw: 0, pitch: 0, call: 0, preen: 0 }, focus = V()
+  const c = { yaw: 0, pitch: 0, call: 0 }, focus = V()
   const update = (t, dt) => {
     acts.tick(dt)
     if (acts.name !== 'idle') hp.wait = Math.max(hp.wait, 0.3)   // 做別的事時不跳
     hp.update(dt); gl.update(dt)
-    const air = hp.hopping ? Math.sin(Math.PI * hp.k) : 0
-    const land = Math.exp(-hp.landed * 4) * Math.sin(hp.landed * 14)
+    // 跳的節奏：起跳前蹲低 → 蹬直把身體往上前方推 → 空中收腳 → 落地時腿一壓一彈、尾巴往上甩
+    const k01 = hp.hopping ? hp.k : 1
+    const air = hp.hopping ? Math.sin(Math.PI * k01) : 0
+    const push = hp.hopping ? Math.max(0, 1 - k01 / 0.25) : 0                      // 剛起跳那一下腿還是直的
+    const land = hp.hopping ? 0 : Math.exp(-hp.landed * 7) * (1 + 0.4 * Math.sin(hp.landed * 22))
+    const crouch = clamp(0.75 * hp.pre + 0.6 * land, 0, 1)
     c.yaw = damp(c.yaw, acts.name === 'preen' ? 1.2 * acts.sgn : gl.yaw, acts.name === 'preen' ? 6 : 18, dt)
     c.pitch = damp(c.pitch, acts.name === 'preen' ? 0.5 : gl.hp, 18, dt)
     c.call = damp(c.call, acts.name === 'call' ? 1 : 0, 6, dt)
-    // 五色鳥叫「ko-tok-tok」：頭一點一點、身體跟著微微一縮一縮
     const beat = c.call * Math.max(0, Math.sin(t * 9))
     r.reset()
-    r.turn('body', LAT, -0.25 * hp.pre + 0.15 * air + 0.04 * beat)
-    r.turn('neck', AX.y, c.yaw * 0.45); r.turn('neck', LAT, c.pitch * 0.4 + 0.12 * beat)
-    r.turn('head', AX.y, c.yaw * 0.55); r.turn('head', LAT, c.pitch * 0.6 + 0.18 * beat)
-    r.turn('tail', LAT, 0.4 * land + 0.25 * air)
-    for (const [w, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(w, AX.y, sg * 0.5 * air)
+    r.turn('body', LAT, 0.04 * beat)
+    r.turn('neck', AX.y, c.yaw * 0.45); r.turn('neck', LAT, c.pitch * 0.4 + 0.12 * beat - 0.15 * crouch)
+    r.turn('head', AX.y, c.yaw * 0.55); r.turn('head', LAT, c.pitch * 0.6 + 0.18 * beat + 0.15 * crouch)
+    r.turn('tail', LAT, 0.45 * land - 0.3 * hp.pre + 0.2 * air)
+    for (const [w, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(w, AX.y, sg * (0.6 * air + 0.15 * push))
+    // 身體：蹲下時壓低、往前傾；起跳時伸直；空中略抬頭
+    const h = LH * (1 - 0.42 * crouch + 0.08 * push) - 0.02 * air
+    lift.position.set(0, h, 0.004 * crouch)
+    lift.rotation.x = 0.28 * crouch - 0.12 * push + 0.08 * air
+    // 腳：在地上時腳掌抓在枝頂（root 座標 y=0）；空中往身體收
+    lift.updateMatrix()
+    const hipY = h + HIP_IN, hipZ = -0.004 + 0.004 * crouch
+    legs.forEach((l) => {
+      const tuck = air * 0.75
+      const fy = lerp(0.002, hipY - (LEG.tib + LEG.tar) * 0.45, tuck)
+      const fz = lerp(0.006, -0.01, tuck)
+      legIK(l, hipY, hipZ, fy, fz, -0.1 * crouch)
+      const curl = 0.55 + 0.6 * tuck - 0.2 * push
+      l.toes.forEach((tt) => (tt.rotation.x = curl))
+    })
     root.position.set(hp.s, env.branch.top(hp.s) + hp.y, 0)
     root.rotation.y = hp.h
     focus.set(hp.s, 0.3, 0)

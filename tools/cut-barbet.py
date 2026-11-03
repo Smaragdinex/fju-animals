@@ -14,6 +14,7 @@ def keep(co):
     x, y, z = co.x, co.z, -co.y
     if 0.1 < x < 0.2 and z > 0.1 and y > 0.34: return True   # 尾巴
     if y < 0.545: return False                                # 枝幹
+    if y < 0.575 and -0.06 < x < 0.17 and -0.06 < z < 0.12: return False   # 原本抓著枝的腳趾（改用程式做的腳）
     if y < 0.61 and (x > 0.19 or z < -0.05): return False     # 枝頂兩側的斷枝
     return True
 bm = bmesh.new(); bm.from_mesh(ob.data)
@@ -35,6 +36,10 @@ for v in bm.verts:
 parts.sort(key=len, reverse=True)
 small = [v for p in parts[1:] for v in p if len(p) < len(parts[0]) * 0.02]
 bmesh.ops.delete(bm, geom=small, context='VERTS')
+# 切口補起來（不然從正面看得到肚子底下一個空洞）
+bm.edges.ensure_lookup_table()
+bnd = [e for e in bm.edges if e.is_boundary]
+bmesh.ops.holes_fill(bm, edges=bnd, sides=0)
 bm.to_mesh(ob.data); bm.free()
 print('RESULT parts', len(parts), 'largest', len(parts[0]), 'removed small', len(small), 'verts', len(ob.data.vertices))
 bpy.ops.export_scene.gltf(filepath=a[1], export_format='GLB', export_image_format='JPEG', export_jpeg_quality=85)
