@@ -4,6 +4,7 @@ import { buildCampus, WATER_Y, useRenderer, waterFx } from './campus.js'
 import { placeAnimal, loadAnimalModels } from './models.js'
 import { buildDetail, foliageNear } from './foliage.js'
 import { ANIMALS } from './animals.js'
+import { snapScroll } from './snap.js'
 
 const canvas = document.getElementById('scene')
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -71,10 +72,9 @@ steps.forEach((_, i) => {
   b.onclick = () => goTo(i)
   dots.appendChild(b)
 })
-function goTo(i) {
-  const s = steps[i]
-  scrollTo({ top: s.offsetTop + s.offsetHeight / 2 - innerHeight / 2, behavior: 'smooth' })
-}
+// 一次滑一站（見 snap.js）；點圓點、標籤、名字也走同一套動畫
+const snap = snapScroll(steps)
+function goTo(i) { snap.goTo(i) }
 const wide = matchMedia('(min-width: 721px)')
 const openFacts = () => document.querySelectorAll('details.facts').forEach((d) => { d.open = wide.matches })
 openFacts(); wide.addEventListener('change', openFacts)
@@ -107,7 +107,7 @@ async function init() {
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
   makePins(campus)
-  Object.assign(window.__fju, { campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
+  Object.assign(window.__fju, { snap, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
   resize()
   // 預熱：載入畫面還蓋著的時候，把每一站都先畫一次。著色器編譯、貼圖上傳、陰影都在這時做完，
   // 第一次滑到某一站時才不會卡一下、閃一下。要畫在畫面上（不是 render target），色調對應才是同一組著色器。
@@ -220,6 +220,7 @@ let smooth = null
 const clock = new THREE.Clock()
 function frame() {
   requestAnimationFrame(frame)
+  snap.tick()
   if (!ready) return
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime
   waterFx.time.value = t
