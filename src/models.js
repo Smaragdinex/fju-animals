@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
 import { canopyGeometry } from './campus.js'
 import { leafify, barkify, leafCardGeometry, leafCardMaterial } from './foliage.js'
 
@@ -942,7 +943,7 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel', 'pond-turtle', 'slider'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
+  await Promise.all(['squirrel-rig', 'pond-turtle', 'slider'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
 }
 // 複製模型並換上會變形的材質。glsl 要定義 void deform(vec3 p)，算出 dPos（新位置）和 dR（法線要轉的矩陣）。
 // recolor 是片段著色器裡改顏色的程式（可以用 vP：模型座標）。
@@ -977,30 +978,9 @@ function deformable(name, uniforms, glsl, recolor = '') {
 }
 
 /* ---------- 赤腹松鼠 ---------- */
-// 模型座標（公尺級，原點在身體中間）：+z 是頭、-z 是尾巴、y 往上；原本是坐著捧東西吃的姿勢。
-// 原模型是美洲灰松鼠，顏色改成赤腹松鼠：背上灰色 → 帶橄欖色的灰褐、肚子和胸口的白 → 紅褐色。
-const SQUIRREL_GLSL = `
-  void deform(vec3 p) {
-    dR = mat3(1.0); dPos = p;
-    // 尾巴：從尾根往上翹過背部，越遠離尾根彎得越多
-    vec3 tp = vec3(0.0, -0.4, -0.45);
-    float wt = max(smoothstep(-0.36, -0.5, p.z), smoothstep(0.28, 0.42, p.y) * smoothstep(0.05, -0.12, p.z));
-    float g = clamp(length(p - tp) / 1.1, 0.0, 1.0) * wt;
-    if (wt > 0.0) {
-      mat3 R = rotY(uTailA * g) * rotX(uTailB * g * g);
-      dPos = tp + R * (p - tp); dR = R;
-      return;
-    }
-    // 頭：轉頭、抬頭、啃東西時一點一點
-    vec3 hp = vec3(0.0, 0.12, 0.26);
-    float wh = smoothstep(0.2, 0.36, p.z) * smoothstep(-0.02, 0.14, p.y);
-    if (wh > 0.0) {
-      mat3 R = rotY(uHeadY * wh) * rotX(uHeadP * wh);
-      dPos = hp + R * (p - hp); dR = R;
-    }
-    // 呼吸
-    dPos += normalize(p * vec3(1.0, 0.6, 0.8) + 1e-4) * uBreath * smoothstep(0.5, 0.0, abs(p.z)) * (1.0 - wh);
-  }`
+// 模型是坐著捧東西吃的姿勢。原檔沒有骨架，我們在 Blender 幫它綁了一副（models/rig/，見 README）：
+// hips → spine1 → spine2 → neck → head、兩隻手三節、兩隻後腳三節、尾巴 8 節，權重是 Blender 自動算的。
+// 模型座標：+z 是頭、y 往上；原本是美洲灰松鼠，毛色在著色器裡改成赤腹松鼠。
 const SQUIRREL_COLOR = `
   {
     vec3 c = diffuseColor.rgb;
@@ -1017,39 +997,77 @@ const SQUIRREL_COLOR = `
     c = mix(c, vec3(0.3, 0.07, 0.028) * clamp(lum / 0.5, 0.55, 1.25), smoothstep(0.0, 0.6, belly));
     diffuseColor.rgb = c;
   }`
+
 function squirrel(env) {
-  const U = { uTailA: { value: 0 }, uTailB: { value: 0 }, uHeadY: { value: 0 }, uHeadP: { value: 0 }, uBreath: { value: 0 } }
-  const model = deformable('squirrel', U, SQUIRREL_GLSL, SQUIRREL_COLOR)
+  const model = cloneSkinned(GLB['squirrel-rig'])   // 有骨架的模型要用 SkeletonUtils 複製，皮才會跟著新骨頭
+  const bones = {}
+  model.traverse((o) => { if (o.isBone) { bones[o.name] = o; o.userData.rest = o.quaternion.clone() } })
+  model.traverse((o) => {
+    if (!o.isSkinnedMesh) return
+    o.castShadow = true; o.frustumCulled = false
+    const m = o.material.clone()
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vP, vNo;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position; vNo = normal;')
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vP, vNo;')
+        .replace('#include <map_fragment>', '#include <map_fragment>\n' + SQUIRREL_COLOR)
+    }
+    m.customProgramCacheKey = () => 'squirrel-color'
+    o.material = m
+  })
   // 身長約 55 公分（比真的大一些，遠處才看得清楚），腳掌放在樹枝上
-  const S = 0.36, root = new THREE.Group()
+  const S = 0.35, root = new THREE.Group()
   model.scale.setScalar(S); model.position.y = 0.79 * S - 0.01
   root.add(model)
+  const _e = new THREE.Euler(), _q = new THREE.Quaternion()
+  const pose = (name, x = 0, y = 0, z = 0) => {
+    const b = bones[name]; if (!b) return
+    b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e.set(x, y, z)))
+  }
+
   const br = env.branch, focus = V()
-  // 模型是坐著捧東西吃的固定姿勢，所以不讓牠整隻滑來滑去：
-  // 待在枝上一個點，大部分時間在啃；張望時頭一下一下快速轉、停住；尾巴小幅抽動；偶爾身體快速挪個角度
-  const st = { s: rnd(-0.5, -0.2), off: 0, offT: 0, h: 0 }   // 鏡頭正對的那一段枝條
+  // 影片：大部分時間坐著用前掌捧著東西啃；啃一陣會抬頭、一下一下轉頭張望；尾巴常常一抽一抽；偶爾很快挪個方向
+  const st = { s: rnd(-0.5, -0.2), off: 0, offT: 0 }   // 鏡頭正對的那一段枝條
   const base = Math.atan2(Math.cos(0.5) * sgn() + env.toCam.x * Math.sin(0.5), env.toCam.z * Math.sin(0.5))
-  const glance = new Glance([0.4, 1.3], 0.7, 0.3)
-  const acts = new Acts({ eat: [5, 3, 8], look: [3, 2, 4.5], twitch: [2, 0.7, 1.2], shift: [1, 0.35, 0.35] }, (n) => {
+  const glance = new Glance([0.35, 1.2], 0.9, 0.35)
+  const acts = new Acts({ eat: [5, 3, 8], look: [3, 2, 4.5], flick: [2, 0.8, 1.4], shift: [1, 0.35, 0.35] }, (n) => {
     if (n === 'shift') st.offT = clamp(st.offT + rnd(0.25, 0.5) * sgn(), -0.6, 0.6)
   })
-  const p = { tailA: 0, tailB: 0, hy: 0, hp: 0 }
+  const c = { look: 0, yaw: 0, pitch: 0, eat: 1, flick: 0 }
   const update = (t, dt) => {
     acts.tick(dt)
     const n = acts.name
-    // 身體挪角度：很快轉過去就停（松鼠的動作是一頓一頓的）
     st.off = damp(st.off, st.offT, 18, dt)
-    // 頭：啃東西時頭微低、快速小幅一點一點；張望時一下一下轉頭
     if (n === 'look') glance.update(dt)
-    const hy = n === 'look' ? glance.yaw : 0.06 * Math.sin(t * 0.6)
-    const hpT = n === 'look' ? -0.12 + glance.hp * 0.5 : 0.08 + (n === 'eat' ? 0.035 * Math.sin(t * 24) : 0)
-    p.hy = damp(p.hy, hy, n === 'look' ? 20 : 6, dt); p.hp = damp(p.hp, hpT, 16, dt)
-    // 尾巴：平常幾乎不動，只有輕微起伏；抽動時尾巴尖端小幅快速抖幾下
-    const tw = n === 'twitch' ? Math.sin(Math.PI * acts.k) : 0
-    p.tailA = damp(p.tailA, 0.04 * Math.sin(t * 0.7), 3, dt)
-    p.tailB = 0.025 * Math.sin(t * 1.1) + tw * 0.09 * Math.sin(t * 30)
-    U.uTailA.value = p.tailA; U.uTailB.value = p.tailB; U.uHeadY.value = p.hy; U.uHeadP.value = p.hp
-    U.uBreath.value = 0.005 * Math.sin(t * 5.5)
+    // 混合權重：吃 ↔ 張望
+    c.eat = damp(c.eat, n === 'eat' || n === 'flick' ? 1 : 0, 5, dt)
+    c.look = 1 - c.eat
+    // 張望：頭一下一下快速轉（damp 很快），脖子跟一部分
+    c.yaw = damp(c.yaw, n === 'look' ? glance.yaw : 0, 22, dt)
+    c.pitch = damp(c.pitch, n === 'look' ? glance.hp : 0, 22, dt)
+    const nib = Math.sin(t * 24), roll = Math.sin(t * 7.5)
+    pose('neck', c.eat * 0.12 - c.look * 0.12 + c.pitch * -0.3, 0, c.yaw * 0.35)
+    pose('head', c.eat * (0.25 + 0.05 * nib) - c.look * 0.2 + c.pitch * -0.6, 0, c.yaw * 0.65)
+    // 前掌：吃的時候把食物轉來轉去送到嘴邊；張望時手稍微放低
+    for (const [side, sg] of [['L', 1], ['R', -1]]) {
+      pose('upperarm' + side, c.eat * 0.05 + c.look * 0.15, 0, 0)
+      pose('forearm' + side, c.eat * (0.08 + 0.05 * roll) - c.look * 0.12, 0, 0)
+      pose('hand' + side, c.eat * 0.15 * Math.sin(t * 7.5 + sg), 0, 0)
+    }
+    // 身體：呼吸，張望時稍微挺起來
+    const br5 = Math.sin(t * 5.5)
+    pose('spine1', 0.015 * br5 - c.look * 0.08, 0, 0)
+    pose('spine2', 0.01 * br5 - c.look * 0.06, 0, c.yaw * 0.1)
+    // 尾巴：平常慢慢擺；抽動時一個波從尾根傳到尾尖
+    c.flick = damp(c.flick, n === 'flick' ? 1 : 0, 10, dt)
+    for (let i = 0; i < 8; i++) {
+      const k = i / 7
+      const sway = 0.035 * Math.sin(t * 0.8 - i * 0.45)
+      const wave = c.flick * 0.16 * Math.sin(t * 16 - i * 0.9) * (0.4 + k)
+      pose('tail' + i, wave + 0.015 * Math.sin(t * 1.3 - i * 0.6), 0, sway)
+    }
     root.position.set(st.s, br.top(st.s), 0)
     root.rotation.y = base + st.off
     focus.set(st.s, 0.25, 0)
