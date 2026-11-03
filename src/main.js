@@ -103,8 +103,21 @@ async function init() {
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target })), OUTRO]
   makePins(campus)
   Object.assign(window.__fju, { campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
-  ready = true
   resize()
+  // 預熱：載入畫面還蓋著的時候，把每一站都先畫一次。著色器編譯、貼圖上傳、陰影都在這時做完，
+  // 第一次滑到某一站時才不會卡一下、閃一下。要畫在畫面上（不是 render target），色調對應才是同一組著色器。
+  const t0 = performance.now()
+  for (const s of shots) {
+    camera.position.copy(s.pos); camera.lookAt(s.target); camera.updateMatrixWorld()
+    detail.update(camera.position, 0)
+    sun.target.position.copy(s.target); sun.position.copy(s.target).addScaledVector(SUN_DIR, 100)
+    sun.target.updateMatrixWorld(); sun.updateMatrixWorld()
+    for (const a of animals) a.update(0, 0.016)
+    renderer.render(scene, camera)
+  }
+  await renderer.compileAsync(scene, camera)
+  console.log(`[fju] 預熱 ${Math.round(performance.now() - t0)} ms`)
+  ready = true
   document.getElementById('loading').classList.add('done')
 }
 
