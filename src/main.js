@@ -49,7 +49,7 @@ story.innerHTML = [
     <div class="sci">${esc(a.sci)}</div>
     <div class="where">📍 ${esc(a.place)}・${esc(a.where)}</div>
     <p>${esc(a.intro)}</p>
-    <ul>${a.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+    <details class="facts"><summary>小知識（${a.facts.length}）</summary><ul>${a.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></details>
   </div></section>`),
   `<section class="step last"><div class="card">
     <h2>全部 10 種</h2>
@@ -75,6 +75,9 @@ function goTo(i) {
   const s = steps[i]
   scrollTo({ top: s.offsetTop + s.offsetHeight / 2 - innerHeight / 2, behavior: 'smooth' })
 }
+const wide = matchMedia('(min-width: 721px)')
+const openFacts = () => document.querySelectorAll('details.facts').forEach((d) => { d.open = wide.matches })
+openFacts(); wide.addEventListener('change', openFacts)
 story.addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goTo(+b.dataset.go) })
 
 /* ---------- 場景 ---------- */

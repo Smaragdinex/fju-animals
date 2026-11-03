@@ -27,6 +27,11 @@ html, body { margin: 0; background: #cfe3ea; color: var(--ink); font-family: -ap
 .card p { margin: 0 0 10px; font-size: 16px; }
 .card ul { margin: 6px 0 0; padding-left: 1.2em; color: #34423a; font-size: 15px; }
 .card li { margin-bottom: 4px; }
+.card details.facts summary { cursor: pointer; color: var(--accent); font-size: 14px; font-weight: 700; list-style: none; }
+.card details.facts summary::-webkit-details-marker { display: none; }
+.card details.facts summary::after { content: ' ▾'; }
+.card details.facts[open] summary::after { content: ' ▴'; }
+@media (min-width: 721px) { .card details.facts summary { display: none; } }
 .card .hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
 .card .small { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.6; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 10px; }
