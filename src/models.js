@@ -943,40 +943,8 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel-rig', 'pond-turtle', 'slider'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
+  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig'].map((n) => L.loadAsync(`models/${n}.glb`).then((g) => { GLB[n] = g.scene })))
 }
-// 複製模型並換上會變形的材質。glsl 要定義 void deform(vec3 p)，算出 dPos（新位置）和 dR（法線要轉的矩陣）。
-// recolor 是片段著色器裡改顏色的程式（可以用 vP：模型座標）。
-const DEFORM_LIB = `
-  vec3 dPos; mat3 dR;
-  mat3 rotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c); }
-  mat3 rotY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c); }
-  mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }`
-function deformable(name, uniforms, glsl, recolor = '') {
-  const root = GLB[name].clone(true)
-  root.traverse((o) => {
-    if (!o.isMesh) return
-    o.castShadow = true; o.frustumCulled = false
-    // 掃描模型是不受光的材質，換成一般受光材質才會和場景的光影一致
-    const src = o.material
-    const m = src.isMeshBasicMaterial ? new THREE.MeshStandardMaterial({ map: src.map, color: src.color, roughness: 0.75 }) : src.clone()
-    m.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, uniforms)
-      const decl = Object.keys(uniforms).map((k) => `uniform float ${k};`).join('\n')
-      sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', `#include <common>\n${decl}\n${DEFORM_LIB}\n${glsl}\nvarying vec3 vP, vNo;`)
-        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\ndeform(position);\nobjectNormal = dR * objectNormal;\nvNo = normal;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\ndeform(position);\ntransformed = dPos;\nvP = position;')
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${decl}\nvarying vec3 vP, vNo;`)
-        .replace('#include <map_fragment>', '#include <map_fragment>\n' + recolor)
-    }
-    m.customProgramCacheKey = () => 'deform-' + name
-    o.material = m
-  })
-  return root
-}
-
 /* ---------- 赤腹松鼠 ---------- */
 // 模型是坐著捧東西吃的姿勢。原檔沒有骨架，我們在 Blender 幫它綁了一副（models/rig/，見 README）：
 // hips → spine1 → spine2 → neck → head、兩隻手三節、兩隻後腳三節、尾巴 8 節，權重是 Blender 自動算的。
@@ -1172,50 +1140,46 @@ function lizard(env) {
 }
 
 /* ---------- 池塘烏龜：一隻在石頭上曬太陽（斑龜的近親 3D 掃描），一隻在水裡游（紅耳龜 3D 掃描） ---------- */
-// 模型座標：頭朝 -x、y 往上；殼長約 12 單位。脖子往 -x 伸縮、轉頭；殼外側的腳划水。
-const TURTLE_GLSL = `
-  void deform(vec3 p) {
-    dR = mat3(1.0); dPos = p;
-    vec3 np = vec3(uNeckX, 0.2, 0.0);
-    float wn = smoothstep(uNeckX + 0.2, uNeckX - 0.9, p.x);
-    if (wn > 0.0) {
-      mat3 R = rotY(uLookY * wn) * rotZ(uLookP * wn);
-      dPos = np + R * (p - np); dPos.x -= uNeck * wn * 1.4; dR = R;
-      return;
+// 兩隻都在 Blender 綁了骨架（tools/rig-turtle.py）：殼 shell 是硬的根骨頭，脖子兩節 + 頭、四隻腳各兩節、尾巴。
+// 模型座標：頭朝 -x、y 往上；殼長約 12 單位。
+function turtleOf(name, len) {
+  const model = cloneSkinned(GLB[name + '-rig'])
+  const bones = {}
+  model.traverse((o) => {
+    if (o.isBone) { bones[o.name] = o; o.userData.rest = o.quaternion.clone(); o.userData.rp = o.position.clone() }
+    if (o.isMesh) {
+      o.castShadow = true; o.frustumCulled = false
+      // 掃描模型是不受光的材質，換成一般受光材質才會和場景的光影一致
+      if (o.material.isMeshBasicMaterial) o.material = new THREE.MeshStandardMaterial({ map: o.material.map, roughness: 0.75 })
     }
-    float side = abs(p.z), aw = smoothstep(uSide, uSide + 1.4, side);
-    if (aw > 0.0 && uPaddle > 0.0) {
-      float ph = (p.x < 0.0 ? 0.0 : 3.14159) + (p.z > 0.0 ? 0.0 : 3.14159);
-      float s = sin(uT * 3.2 + ph), c = cos(uT * 3.2 + ph), r = side - uSide;
-      dPos.x += s * aw * r * 0.7 * uPaddle;
-      dPos.y += c * aw * r * 0.25 * uPaddle;
-    }
-  }`
-function turtleOf(name, len, neckX, side) {
-  const U = { uNeck: { value: 0 }, uLookY: { value: 0 }, uLookP: { value: 0 }, uPaddle: { value: 0 }, uT: { value: 0 }, uNeckX: { value: neckX }, uSide: { value: side } }
-  const model = deformable(name, U, TURTLE_GLSL)
+  })
   const box = new THREE.Box3().setFromObject(model), k = len / (box.max.x - box.min.x)
   const inner = new THREE.Group()
   model.scale.setScalar(k); model.position.y = -box.min.y * k
   inner.add(model); inner.rotation.y = Math.PI / 2   // 頭轉到 +z
   const root = new THREE.Group(); root.add(inner)
-  return { root, U, k, h: (box.max.y - box.min.y) * k }
+  // 縮脖子：neck0 沿著自己的方向往殼裡滑
+  const n0 = bones.neck0, nDir = bones.neck1.position.clone().applyQuaternion(n0.userData.rest), nLen = nDir.length()
+  nDir.normalize()
+  const _e = new THREE.Euler(), _q = new THREE.Quaternion()
+  const pose = (n, x = 0, y = 0, z = 0) => { const b = bones[n]; b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e.set(x, y, z))) }
+  const neckOut = (f) => n0.position.copy(n0.userData.rp).addScaledVector(nDir, f * nLen)
+  return { root, pose, neckOut, h: (box.max.y - box.min.y) * k }
 }
 function turtles(env) {
   const g = new THREE.Group(), focus = V(0, 0.8, 0)
   // 曬太陽：脖子伸長、頭慢慢轉，偶爾縮頭
-  const a = turtleOf('pond-turtle', 0.62, -4.6, 3.1)
+  const a = turtleOf('pond-turtle', 0.62)
   g.add(a.root)
   const wa = new Walker({ radius: 0.22, speed: 0.05, turn: 0.5 })
   wa.h = env.face(1, 0.6)
   const actsA = new Acts({ bask: [4, 5, 10], look: [3, 2, 5], hide: [1, 2, 4], turn: [1, 99, 99] }, (n, ac) => {
     if (n === 'turn') wa.want = wa.h + ac.sgn * rnd(0.4, 1)
   })
-  const sa = { neck: 0, ly: 0, lp: 0 }
+  const sa = { neck: 0, ly: 0, lp: 0, tuck: 0 }
   // 水裡游：四肢划水，頭露出水面
-  const b = turtleOf('slider', 0.46, -4.9, 3.2)
+  const b = turtleOf('slider', 0.46)
   g.add(b.root)
-  b.U.uPaddle.value = 1
   const rocks = env.rocks
   const nearRock = (x, z, r = 0.25) => rocks.some((rk) => Math.hypot(x - rk.x, z - rk.z) < rk.r + r)
   const wb = new Walker({ radius: 1.7, speed: 0.18, turn: 0.6, avoid: (x, z, p) => {
@@ -1228,20 +1192,40 @@ function turtles(env) {
     wa.update(dt)
     if (actsA.name === 'turn' && !wa.busy) actsA.next()
     const n = actsA.name
-    sa.neck = damp(sa.neck, n === 'hide' ? -0.9 : n === 'bask' ? 0.35 : 0.15, n === 'hide' ? 6 : 1.5, dt)
-    sa.ly = damp(sa.ly, n === 'look' ? 0.5 * Math.sin(t * 0.5 + actsA.r * 3) : 0.08 * Math.sin(t * 0.2), 2, dt)
-    sa.lp = damp(sa.lp, n === 'bask' ? 0.25 : 0.1, 2, dt)
-    a.U.uNeck.value = sa.neck + 0.03 * Math.sin(t * 1.4); a.U.uLookY.value = sa.ly; a.U.uLookP.value = sa.lp
+    // 脖子：曬太陽時伸長、頭抬平；受驚時很快縮進殼裡，腳也收起來；平常呼吸時脖子一伸一縮
+    sa.neck = damp(sa.neck, n === 'hide' ? -0.85 : n === 'bask' ? 0.15 : 0, n === 'hide' ? 7 : 1.2, dt)
+    sa.tuck = damp(sa.tuck, n === 'hide' ? 1 : 0, n === 'hide' ? 6 : 1, dt)
+    sa.ly = damp(sa.ly, n === 'look' ? 0.55 * Math.sin(t * 0.5 + actsA.r * 3) : 0.08 * Math.sin(t * 0.2), 2, dt)
+    sa.lp = damp(sa.lp, n === 'bask' ? 0.3 : 0.15, 2, dt)
+    a.neckOut(sa.neck + 0.03 * Math.sin(t * 1.4))
+    a.pose('neck0', 0, sa.ly * 0.5, -sa.lp * 0.5)
+    a.pose('neck1', 0, sa.ly * 0.3, -sa.lp * 0.3)
+    a.pose('head', 0, sa.ly * 0.2, -sa.lp * 0.5 + 0.25 * sa.tuck)
+    for (const [l, sg] of [['fl', 1], ['fr', -1], ['hl', 1], ['hr', -1]]) {
+      a.pose(l + '0', 0, sg * 0.5 * sa.tuck, 0)
+      a.pose(l + '1', 0, sg * 0.6 * sa.tuck, 0)
+    }
+    a.pose('tail', 0, 0.1 * Math.sin(t * 0.3), 0)
     a.root.position.set(wa.p.x, env.rockTop, wa.p.y); a.root.rotation.y = wa.h
 
     if (!wb.goal) wb.pick(0.8)
     wb.update(dt)
-    b.U.uT.value = t; b.U.uNeck.value = 0.25; b.U.uLookY.value = 0.15 * Math.sin(t * 0.4); b.U.uLookP.value = 0.3
+    // 划水：對角的兩隻腳一起划（左前＋右後、右前＋左後），前腳划得大、後腳像槳一樣推
+    const ph = t * 3
+    for (const [l, sg, off, A] of [['fl', 1, 0, 0.55], ['hr', -1, 0, 0.4], ['fr', -1, Math.PI, 0.55], ['hl', 1, Math.PI, 0.4]]) {
+      const c = Math.sin(ph + off)
+      b.pose(l + '0', 0.15 * Math.cos(ph + off), sg * A * c, 0)
+      b.pose(l + '1', 0, sg * 0.35 * c, 0)
+    }
+    b.neckOut(0.1)
+    b.pose('neck0', 0, 0.15 * Math.sin(t * 0.4), -0.15)
+    b.pose('head', 0, 0.1 * Math.sin(t * 0.4), -0.2)
+    b.pose('tail', 0, 0.25 * Math.sin(ph), 0)
     // 殼大約九成在水面下
     b.root.position.set(wb.p.x, env.waterY - b.h * 0.72 + 0.006 * Math.sin(t * 2), wb.p.y)
     b.root.rotation.y = wb.h; b.root.rotation.z = 0.04 * Math.sin(t * 1.6)
   }
-  return { obj: g, focus, update }
+  return { obj: g, focus, update, acts: actsA }
 }
 
 /* ---------- 停棲處 ---------- */
