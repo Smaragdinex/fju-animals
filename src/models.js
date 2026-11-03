@@ -1021,54 +1021,42 @@ function squirrel(env) {
   const U = { uTailA: { value: 0 }, uTailB: { value: 0 }, uHeadY: { value: 0 }, uHeadP: { value: 0 }, uBreath: { value: 0 } }
   const model = deformable('squirrel', U, SQUIRREL_GLSL, SQUIRREL_COLOR)
   // 身長約 55 公分（比真的大一些，遠處才看得清楚），腳掌放在樹枝上
-  const S = 0.36, root = new THREE.Group(), hop = new THREE.Group()
+  const S = 0.36, root = new THREE.Group()
   model.scale.setScalar(S); model.position.y = 0.79 * S - 0.01
-  hop.add(model); root.add(hop)
+  root.add(model)
   const br = env.branch, focus = V()
-  const st = { s: rnd(br.min + 0.4, br.max - 0.3), dir: sgn(), from: 0, to: 0, h: 0 }
-  const faceH = (dir) => Math.atan2(dir * Math.cos(0.35) + env.toCam.x * Math.sin(0.35), env.toCam.z * Math.sin(0.35))
-  st.h = faceH(st.dir)
-  // 影片：大部分時間坐著用前掌捧著東西啃，啃一陣抬頭張望、甩尾巴，再一蹦一蹦換位置
-  const acts = new Acts({ eat: [4, 3, 7], look: [3, 1.5, 3.5], flick: [2, 0.8, 1.4], hop: [3, 99, 99], turn: [1, 0.7, 0.7] }, (n, a) => {
-    if (n === 'hop') {
-      let dir = sgn(); const len = rnd(0.3, 0.9)
-      if (st.s + dir * len > br.max || st.s + dir * len < br.min) dir = -dir
-      st.from = st.s; st.to = clamp(st.s + dir * len, br.min, br.max); st.dir = dir
-      a.hops = Math.max(1, Math.round(Math.abs(st.to - st.from) / 0.22)); a.hopDur = a.hops * 0.32; a.dur = a.hopDur + 1
-    }
-    if (n === 'turn') st.dir = -st.dir
+  // 模型是坐著捧東西吃的固定姿勢，所以不讓牠整隻滑來滑去：
+  // 待在枝上一個點，大部分時間在啃；張望時頭一下一下快速轉、停住；尾巴小幅抽動；偶爾身體快速挪個角度
+  const st = { s: rnd(-0.5, -0.2), off: 0, offT: 0, h: 0 }   // 鏡頭正對的那一段枝條
+  const base = Math.atan2(Math.cos(0.5) * sgn() + env.toCam.x * Math.sin(0.5), env.toCam.z * Math.sin(0.5))
+  const glance = new Glance([0.4, 1.3], 0.7, 0.3)
+  const acts = new Acts({ eat: [5, 3, 8], look: [3, 2, 4.5], twitch: [2, 0.7, 1.2], shift: [1, 0.35, 0.35] }, (n) => {
+    if (n === 'shift') st.offT = clamp(st.offT + rnd(0.25, 0.5) * sgn(), -0.6, 0.6)
   })
   const p = { tailA: 0, tailB: 0, hy: 0, hp: 0 }
   const update = (t, dt) => {
     acts.tick(dt)
-    const n = acts.name, a = acts
-    let lift = 0, crouch = 0
-    if (n === 'hop') {
-      const k = clamp(acts.t / a.hopDur, 0, 1), ph = k * a.hops, f = ph - Math.floor(ph)
-      st.s = lerp(st.from, st.to, ss(k, 0, 1))
-      lift = 0.09 * Math.sin(Math.PI * f); crouch = 0.25 * Math.sin(Math.PI * f)
-      if (k >= 0.999) acts.next(pick(['eat', 'look', 'flick']))
-    }
-    st.h = dampAngle(st.h, faceH(st.dir), 8, dt)
-    // 尾巴：平常慢慢擺，甩尾時快速前後彈
-    const flick = n === 'flick' ? Math.sin(Math.PI * acts.k) : 0
-    p.tailA = damp(p.tailA, 0.12 * Math.sin(t * 0.9) + (n === 'hop' ? 0.05 * Math.sin(t * 9) : 0), 4, dt)
-    p.tailB = damp(p.tailB, (n === 'hop' ? -0.35 : 0) + 0.06 * Math.sin(t * 1.3), 5, dt) + flick * 0.35 * Math.sin(t * 22)
-    // 頭：啃東西快速小點頭；張望時左右轉、抬頭
-    const hy = n === 'look' ? 0.55 * Math.sin(t * 0.8 + a.r * 4) : n === 'eat' ? 0.08 * Math.sin(t * 0.7) : 0
-    const hpT = n === 'look' ? -0.15 : n === 'eat' ? 0.1 + 0.05 * Math.sin(t * 26) : 0
-    p.hy = damp(p.hy, hy, 6, dt); p.hp = damp(p.hp, hpT, 14, dt)
+    const n = acts.name
+    // 身體挪角度：很快轉過去就停（松鼠的動作是一頓一頓的）
+    st.off = damp(st.off, st.offT, 18, dt)
+    // 頭：啃東西時頭微低、快速小幅一點一點；張望時一下一下轉頭
+    if (n === 'look') glance.update(dt)
+    const hy = n === 'look' ? glance.yaw : 0.06 * Math.sin(t * 0.6)
+    const hpT = n === 'look' ? -0.12 + glance.hp * 0.5 : 0.08 + (n === 'eat' ? 0.035 * Math.sin(t * 24) : 0)
+    p.hy = damp(p.hy, hy, n === 'look' ? 20 : 6, dt); p.hp = damp(p.hp, hpT, 16, dt)
+    // 尾巴：平常幾乎不動，只有輕微起伏；抽動時尾巴尖端小幅快速抖幾下
+    const tw = n === 'twitch' ? Math.sin(Math.PI * acts.k) : 0
+    p.tailA = damp(p.tailA, 0.04 * Math.sin(t * 0.7), 3, dt)
+    p.tailB = 0.025 * Math.sin(t * 1.1) + tw * 0.09 * Math.sin(t * 30)
     U.uTailA.value = p.tailA; U.uTailB.value = p.tailB; U.uHeadY.value = p.hy; U.uHeadP.value = p.hp
-    U.uBreath.value = 0.006 * Math.sin(t * 5)
-    hop.position.y = lift
-    hop.rotation.x = -crouch * 0.6
-    model.scale.set(S, S * (1 - 0.08 * crouch), S)
+    U.uBreath.value = 0.005 * Math.sin(t * 5.5)
     root.position.set(st.s, br.top(st.s), 0)
-    root.rotation.y = st.h
+    root.rotation.y = base + st.off
     focus.set(st.s, 0.25, 0)
   }
   return { obj: root, focus, update, acts }
 }
+
 /* ---------- 斯文豪氏攀蜥（貼在樹幹上） ---------- */
 function lizard(env) {
   const P = K({ base: 0x6d6a3d, dark: 0x3c3a22, stripe: 0xe0d27a, belly: 0xc3bc96, head: 0x75734a, lip: 0xd8cf9a })
