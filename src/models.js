@@ -309,13 +309,15 @@ function rigged(name, { straight = {} } = {}) {
   model.updateMatrixWorld(true)
   const mq = model.getWorldQuaternion(new THREE.Quaternion()).invert(), wq = new THREE.Quaternion()
   for (const b of Object.values(bones)) {
-    b.userData.rest = b.quaternion.clone()
+    b.userData.rest = b.quaternion.clone(); b.userData.restP = b.position.clone()
     b.userData.inv = mq.clone().multiply(b.getWorldQuaternion(wq)).invert()   // 模型座標 → 骨頭本地
   }
   const _a = V(), _q = new THREE.Quaternion()
   return {
     model, bones,
-    reset() { for (const b of Object.values(bones)) b.quaternion.copy(b.userData.rest) },
+    reset() { for (const b of Object.values(bones)) { b.quaternion.copy(b.userData.rest); b.position.copy(b.userData.restP) } },
+    // 把骨頭沿著父骨頭的方向推遠（s = 0.5 → 父骨頭拉長 50%），用來伸脖子
+    stretch(n, s) { const b = bones[n]; if (b && s) b.position.copy(b.userData.restP).multiplyScalar(1 + s) },
     turn(n, axis, angle) {
       const b = bones[n]; if (!b || !angle) return
       b.quaternion.multiply(_q.setFromAxisAngle(_a.copy(axis).applyQuaternion(b.userData.inv).normalize(), angle))
@@ -341,22 +343,24 @@ function groundTripo(env, cfg) {
     if (n === 'turn') w.want = w.h + a.sgn * rnd(0.6, 2)
   })
   const glance = new Glance([0.6, 1.8], 0.7, 0.25)
-  const c = { lean: 0, neck: 0, head: 0, yaw: 0, phase: 0, amp: 0, sway: 0 }, focus = V()
+  const c = { lean: 0, neck: 0, head: 0, yaw: 0, phase: 0, amp: 0, sway: 0, reach: 0 }, focus = V()
   const update = (t, dt) => {
     acts.tick(dt)
     const d = w.update(dt)
     if ((acts.name === 'walk' || acts.name === 'turn') && !w.busy) acts.next()
     c.phase += d / (cfg.step ?? 0.16); c.amp = damp(c.amp, w.busy ? 1 : 0, 6, dt)
     const n = acts.name, kk = acts.k
-    // 目標姿勢：lean 身體前傾、neck 脖子往前下伸、head 頭抬回水平
-    let lean = 0, neck = 0, head = 0, rate = 4
-    if (n === 'hunt' || n === 'stare') { lean = 0.35; neck = 0.5; head = -0.35 }
+    // 目標姿勢：lean 身體前傾、neck 脖子往前下伸、head 頭抬回水平、reach 脖子伸長（cfg.reach 倍）
+    let lean = 0, neck = 0, head = 0, reach = 0, rate = 4
+    if (n === 'hunt' || n === 'stare') { lean = 0.35; neck = 0.5; head = -0.35; reach = 0.6 }
     else if (n === 'strike' || n === 'peck') {
-      if (kk < 0.3) { lean = 0.4; neck = 0.6; head = -0.4 }
-      else if (kk < 0.45) { lean = 0.75; neck = 1.1; head = -0.2; rate = 25 }
+      if (kk < 0.3) { lean = 0.4; neck = 0.6; head = -0.4; reach = 0.4 }
+      else if (kk < 0.45) { lean = 0.75; neck = 1.1; head = -0.2; reach = 1; rate = 25 }
       else { lean = 0.1; neck = 0.1; head = 0.1; rate = 6 }
-    } else if (n === 'walk' || n === 'turn') { lean = 0.15; neck = 0.15 }
+    } else if (n === 'walk' || n === 'turn') { lean = 0.15; neck = 0.15; reach = 0.2 }
+    else if (n === 'look') { neck = -0.25; head = 0.2; reach = 0.8 }   // 警戒：脖子往上伸直
     c.lean = damp(c.lean, lean, rate, dt); c.neck = damp(c.neck, neck, rate, dt); c.head = damp(c.head, head, rate, dt)
+    c.reach = damp(c.reach, reach * (cfg.reach ?? 0), rate, dt)
     if (n === 'look' || n === 'stand') glance.update(dt)
     c.yaw = damp(c.yaw, n === 'look' || n === 'stand' ? glance.yaw * (n === 'look' ? 1 : 0.4) : 0, 10, dt)
     // 盯地面時脖子左右慢慢晃（頭保持對著同一點，用視差判斷獵物位置），晃一陣停一陣
@@ -368,15 +372,19 @@ function groundTripo(env, cfg) {
     r.turn('body', LAT, -c.lean + 0.02 * Math.sin(t * 1.3))
     r.turn('neck', LAT, -c.neck * 0.8 - bob); r.turn('neck', AX.y, c.yaw * 0.5 + c.sway)
     r.turn('head', LAT, -c.neck * 0.3 - c.head + bob * 1.2); r.turn('head', AX.y, c.yaw * 0.6 - c.sway * 0.95)
+    r.stretch('head', c.reach)
     r.turn('tail', LAT, 0.1 * c.lean)
     for (const [side, off] of [['L', 0], ['R', Math.PI]]) {
-      // 身體前傾時大腿往回轉，腳掌留在原地；走路時大腿前後擺、抬腳時小腿和腳掌往上收
-      const sw = Math.sin(ph + off) * c.amp, lift = Math.max(0, Math.cos(ph + off)) * c.amp
-      r.turn('thigh' + side, LAT, c.lean + 0.35 * sw + 0.35 * lift)
-      r.turn('shin' + side, LAT, -0.7 * lift)
-      r.turn('foot' + side, LAT, 0.5 * lift)
+      // 身體前傾時大腿往回轉，腳掌留在原地。前半圈抬腳往前跨（lift 用 sin² 起落才不會頓），
+      // 後半圈腳踩地往後推；腳掌角度抵掉大腿和小腿的轉動，踩地時保持貼平
+      const s = Math.sin(ph + off), sw = -Math.cos(ph + off) * c.amp, lift = (s > 0 ? s * s : 0) * c.amp
+      const th = 0.32 * sw + 0.3 * lift, sh = -0.8 * lift
+      r.turn('thigh' + side, LAT, c.lean + th)
+      r.turn('shin' + side, LAT, sh)
+      r.turn('foot' + side, LAT, -th - sh - 0.25 * lift)
     }
-    root.position.set(w.p.x, 0.02 * Math.max(0, Math.sin(ph * 2)) * c.amp, w.p.y); root.rotation.y = w.h
+    // 兩腳同時著地時身體最低
+    root.position.set(w.p.x, 0.012 * (0.5 - 0.5 * Math.cos(ph * 2)) * c.amp, w.p.y); root.rotation.y = w.h
     focus.set(w.p.x, cfg.focusY ?? 0.6, w.p.y)
   }
   return { obj: root, focus, update, acts, walker: w }
@@ -388,7 +396,7 @@ function nightHeron(env) {
 }
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
 function malayanHeron(env) {
-  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3,
+  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1.4,
     walk: { radius: 1.6, speed: 0.28 }, step: 0.17, focusY: 0.5,
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
