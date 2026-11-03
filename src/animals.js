@@ -95,7 +95,7 @@ export const ANIMALS = [
     ],
   },
   {
-    id: 'nightheron', spot: [118, 18.5], place: '荷花池', perch: 'ground', view: 160,
+    id: 'nightheron', spot: [118, 20.1], place: '荷花池', perch: 'ground', view: 160,
     name: '夜鷺', sci: 'Nycticorax nycticorax',
     where: '池塘邊', habitat: 'pond',
     intro: '常縮著脖子站在水邊，看起來像在打瞌睡，其實在等魚游過來。牠是很有耐心的獵人，可以在同一個地方站很久，看準時機才猛然把頭伸出去。名字裡有「夜」，傍晚和晚上最活躍，白天常在池邊的樹上休息。',

@@ -6,7 +6,7 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
-import { canopyGeometry } from './campus.js'
+import { canopyGeometry, ripple } from './campus.js'
 import { leafify, barkify, leafCardGeometry, leafCardMaterial } from './foliage.js'
 
 const { clamp, lerp, smoothstep: ss, randFloat: rnd } = THREE.MathUtils
@@ -466,7 +466,7 @@ function groundTripo(env, cfg) {
         L.t = Math.min(1, L.t + dt / swing)
         const e = L.t * L.t * (3 - 2 * L.t)
         L.pos.lerpVectors(L.from, L.to, e); L.pos.y += lift * Math.sin(Math.PI * L.t)
-        if (L.t >= 1) L.plant.copy(L.to)
+        if (L.t >= 1) { L.plant.copy(L.to); if (cfg.wade) ripple(L.to.x, L.to.z, 0.35) }   // 涉水時每踩一步一圈小水波
       } else {
         L.pos.copy(L.plant)
         // 腳落後太多（走路）或離站姿位置太遠（停下、轉身）就跨一步；另一隻腳在空中時不跨
@@ -490,14 +490,23 @@ function groundTripo(env, cfg) {
       // 頭推到前面時稍微低一點（影片裡脖子往前伸時頭會下沉）
       hd.position.add(FWD.clone().multiplyScalar(-c.hb).add(_d.set(0, -0.3 * Math.max(0, c.hb), 0)).applyQuaternion(modelQ(hd.parent, new THREE.Quaternion()).invert()))
     }
+    // 涉水的鷺鷥啄下去、嘴碰到水面時激起一圈大水波
+    if (cfg.wade) {
+      if (n !== 'strike') c.splash = false
+      else if (!c.splash && kk > 0.3) {
+        const tip = r.bones.head.localToWorld(_d.set(0, cfg.bill, 0))
+        if (tip.y < env.waterY + 0.03) { ripple(tip.x, tip.z, 1.2); c.splash = true }
+      }
+    }
     focus.set(w.p.x, cfg.focusY ?? 0.6, w.p.y)
   }
   return { obj: root, focus, update, acts, walker: w, legs }
 }
 // 夜鷺（ChatGPT 參考圖 → Tripo，跟黑冠麻鷺一樣綁法：脖子三節、頭剛性、腳趾）：站著等、慢慢走、很快啄下去
 function nightHeron(env) {
-  return groundTripo(env, { name: 'night-heron-rig', H: 0.8, h0: 0.83, rotY: Math.PI / 2, lat: V(0, 0, -1), reach: 0.8, shadow: 0.3,
-    walk: { radius: 0.7, speed: 0.18 }, swingT: 0.36, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
+  // 站在池塘淺水裡（水深約 12 公分，離北岸石緣 1.4 公尺），只在池岸內側走動；啄的時候嘴伸進水裡
+  return groundTripo(env, { name: 'night-heron-rig', H: 0.8, h0: 0.83, rotY: Math.PI / 2, lat: V(0, 0, -1), reach: 0.8, shadow: 0.3, wade: true, bill: 0.276,
+    walk: { radius: 0.6, speed: 0.18, avoid: (x, z) => z < -0.4 }, swingT: 0.36, lift: 0, knee: [1.0, 1.7], focusY: 0.5,
     acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] } })
 }
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
@@ -864,6 +873,7 @@ function turtles(env) {
     return false
   } })
   for (let i = 0; i < 50; i++) { const x = rnd(-1.6, 1.6), z = rnd(-1.6, 1.6); if (!nearRock(x, z, 0.5)) { wb.p.set(x, z); break } }
+  let wake = 0; const _wk = V()
   const update = (t, dt) => {
     actsA.tick(dt)
     wa.update(dt)
@@ -901,6 +911,11 @@ function turtles(env) {
     // 殼大約九成在水面下
     b.root.position.set(wb.p.x, env.waterY - b.h * 0.72 + 0.006 * Math.sin(t * 2), wb.p.y)
     b.root.rotation.y = wb.h; b.root.rotation.z = 0.04 * Math.sin(t * 1.6)
+    // 游的時候頭前面推出一圈圈水波，停著的時候偶爾一小圈
+    if ((wake -= dt) <= 0) {
+      const hp = g.localToWorld(_wk.set(wb.p.x + Math.sin(wb.h) * 0.22, 0, wb.p.y + Math.cos(wb.h) * 0.22))
+      ripple(hp.x, hp.z, wb.busy ? 0.55 : 0.2); wake = wb.busy ? 0.45 : rnd(2, 4)
+    }
   }
   return { obj: g, focus, update, acts: actsA }
 }

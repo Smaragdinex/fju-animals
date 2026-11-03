@@ -1,6 +1,6 @@
 // 輔大的動物鄰居：往下捲，鏡頭依序飛到每種動物出沒的地點
 import * as THREE from 'three'
-import { buildCampus, WATER_Y, useRenderer } from './campus.js'
+import { buildCampus, WATER_Y, useRenderer, waterFx } from './campus.js'
 import { placeAnimal, loadAnimalModels } from './models.js'
 import { buildDetail, foliageNear } from './foliage.js'
 import { ANIMALS } from './animals.js'
@@ -222,6 +222,7 @@ function frame() {
   requestAnimationFrame(frame)
   if (!ready) return
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime
+  waterFx.time.value = t
   const p = scrollProgress()
   const nearest = shotAt(p)
   // 除錯：__fju.view = { pos:[x,y,z], target:[x,y,z] } 可以把鏡頭固定在任意位置

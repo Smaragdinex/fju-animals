@@ -6,6 +6,53 @@ import { canopyBump, leafify, barkify } from './foliage.js'
 
 export const WATER_Y = 0.12
 
+/* ---------- 水面：細碎的風浪 + 動物激起的水波紋 ---------- */
+// 不動頂點，只在片段著色器裡算水面高度的斜率去歪法線，反射的天空和太陽亮點就會跟著晃。
+// 水波紋（ripple）是一圈往外擴散、越來越淡的環：烏龜游過、鷺鷥踩水和啄魚時加一個。
+const RIPPLES = 12
+export const waterFx = { time: { value: 0 }, rip: { value: Array.from({ length: RIPPLES }, () => new THREE.Vector4(0, 0, -99, 0)) }, n: 0 }
+export function ripple(x, z, amp = 1) { waterFx.rip.value[waterFx.n++ % RIPPLES].set(x, z, waterFx.time.value, amp) }
+function waterSurface(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uWT = waterFx.time; sh.uniforms.uRip = waterFx.rip
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWp;
+        uniform float uWT;
+        uniform vec4 uRip[${RIPPLES}];
+        // 水面高度對 x、z 的斜率
+        vec2 waterSlope(vec2 p) {
+          vec2 g = vec2(0.0);
+          // 風吹的細浪：八組波長 15～100 公分、方向散在風向左右的小波疊起來，
+          // 再乘上一層慢慢飄的「陣風」明暗，水面才不會是整齊的條紋
+          const vec2 W[8] = vec2[8](vec2(6.3, 0.0), vec2(8.9, 0.55), vec2(11.7, -0.6), vec2(15.1, 0.95), vec2(19.6, -1.1), vec2(24.3, 0.3), vec2(31.0, -0.35), vec2(39.5, 1.3));
+          float gust = 0.55 + 0.45 * sin(p.x * 0.31 + uWT * 0.23) * sin(p.y * 0.47 - uWT * 0.17 + 1.3);
+          for (int i = 0; i < 8; i++) {
+            float k = W[i].x, a = 0.4 + W[i].y;
+            vec2 d = vec2(cos(a), sin(a));
+            g += d * gust * (0.045 / sqrt(k)) * cos(dot(d, p) * k + uWT * sqrt(9.8 * k) * 0.6 + float(i) * 1.7);
+          }
+          // 水波紋：從 (x, z) 在時間 t0 開始，以每秒 0.35 公尺往外擴散的一圈圈環
+          for (int j = 0; j < ${RIPPLES}; j++) {
+            vec4 R = uRip[j];
+            float age = uWT - R.z;
+            if (age < 0.0 || age > 4.0) continue;
+            vec2 d = p - R.xy; float r = length(d) + 1e-4;
+            float front = r - 0.35 * age;
+            float env = R.w * exp(-age * 1.1) * exp(-front * front * 30.0) / (1.0 + 3.0 * r);
+            g += (d / r) * env * 1.6 * cos(front * 45.0);
+          }
+          return g;
+        }`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        vec2 ws = waterSlope(vWp.xz);
+        normal = normalize((viewMatrix * vec4(normalize(vec3(-ws.x, 1.0, -ws.y)), 0.0)).xyz);`)
+  }
+}
+
 const rand = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647) })()
 
 export function inside([x, z], poly) {
@@ -105,7 +152,8 @@ export async function buildCampus(scene) {
 
   /* 池塘水面 + 一圈石砌池岸 */
   // 水面：反射天空（只給水用的環境貼圖，其他材質不受影響）
-  const waterMat = new THREE.MeshStandardMaterial({ color: 0x24515c, roughness: 0.06, metalness: 0, transparent: true, opacity: 0.9, envMap: skyEnv(), envMapIntensity: 1.2 })
+  const waterMat = new THREE.MeshStandardMaterial({ color: 0x24515c, roughness: 0.06, metalness: 0, transparent: true, opacity: 0.86, envMap: skyEnv(), envMapIntensity: 1.2 })
+  waterSurface(waterMat)
   for (const p of data.areas.filter((a) => a.kind === 'water')) {
     scene.add(new THREE.Mesh(flatShape(p.pts, WATER_Y), waterMat))
     const edge = new THREE.Mesh(ribbon([...p.pts, p.pts[0]], 0.8, 0.2), new THREE.MeshStandardMaterial({ color: 0xa79f8f, roughness: 1 }))
