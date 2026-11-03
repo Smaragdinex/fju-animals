@@ -53,10 +53,21 @@ elif kind in ('dove', 'heron', 'barbet2'):
     # 保留生成腳的鳥（Tripo 生成，頭朝 -x；五色鳥第二版也是）：保留生成的腳，綁 thigh → shin → foot。點位從命令列 JSON 傳入。
     q = EXTRA[kind]
     p3 = lambda xy, z=0: (xy[0], xy[1], z)
-    B = {'body': (p3(q['hip']), p3(q['chest']), None, 1.0),
-         'neck': (p3(q['chest']), p3(q['nk']), 'body', 0.8),
-         'head': (p3(q['nk']), p3(q['bill']), 'neck', 0.8),
-         'tail': (p3(q['tail0']), p3(q['tailE']), 'body', 0.6)}
+    if 'neck' in q:
+        # 身體分兩節（body → chest）、脖子三節（neck → neck2 → neck3），伸脖子時三節一起拉長，頭整顆剛性
+        nk = q['neck']
+        B = {'body': (p3(q['hip']), p3(q['mid']), None, 1.0),
+             'chest': (p3(q['mid']), p3(nk[0]), 'body', 1.0),
+             'neck': (p3(nk[0]), p3(nk[1]), 'chest', 0.8),
+             'neck2': (p3(nk[1]), p3(nk[2]), 'neck', 0.8),
+             'neck3': (p3(nk[2]), p3(q['nk']), 'neck2', 0.8),
+             'head': (p3(q['nk']), p3(q['bill']), 'neck3', 0.8),
+             'tail': (p3(q['tail0']), p3(q['tailE']), 'body', 0.6)}
+    else:
+        B = {'body': (p3(q['hip']), p3(q['chest']), None, 1.0),
+             'neck': (p3(q['chest']), p3(q['nk']), 'body', 0.8),
+             'head': (p3(q['nk']), p3(q['bill']), 'neck', 0.8),
+             'tail': (p3(q['tail0']), p3(q['tailE']), 'body', 0.6)}
     for s, n in ((1, 'L'), (-1, 'R')):
         B['wing' + n] = (p3(q['wing0'], s * q['wz']), p3(q['wingE'], s * q['wz']), 'body', 0.4)
     for n, leg in (('L', q['legL']), ('R', q['legR'])):
@@ -100,6 +111,7 @@ def segd(p, h, t):
     u = 0.0 if L2 == 0 else max(0.0, min(1.0, (p - h).dot(d) / L2))
     return (p - (h + d * u)).length
 groups = {g.name: g for g in ob.vertex_groups}
+HEAD = EXTRA.get(kind, {}).get('headRigid') if isinstance(EXTRA.get(kind), dict) else None   # [y0, y1, x 小於多少才算頭]
 for v in ob.data.vertices:
     ds = sorted(((segd(v.co, h, t) / r, n) for n, (h, t, r) in segs.items()))
     # 腳和尾巴互不借權重（掃描時尾巴尖貼著後腳趾，不擋的話尾巴一動腳趾就被拉走）
@@ -110,7 +122,14 @@ for v in ob.data.vertices:
     ds = ds[:3]
     ws = [(1.0 / (d ** 4 + 1e-6), n) for d, n in ds]
     tot = sum(w for w, _ in ws)
-    for w, n in ws: groups[n].add([v.index], w / tot, 'REPLACE')
+    ws = [(w / tot, n) for w, n in ws]
+    if HEAD:
+        # 頭部剛性：y 高於 HEAD[1] 的整顆跟 head 走（含冠羽），HEAD[0]～HEAD[1] 之間漸變
+        y = v.co.z; hk = max(0.0, min(1.0, (y - HEAD[0]) / (HEAD[1] - HEAD[0]))) if v.co.x < HEAD[2] else 0.0
+        hk = hk * hk * (3 - 2 * hk)
+        ws = [(w * (1 - hk), n) for w, n in ws if n != 'head'] + [(hk + sum(w for w, n in ws if n == 'head') * (1 - hk), 'head')]
+    for w, n in ws:
+        if w > 1e-4: groups[n].add([v.index], w, 'REPLACE')
 print('RESULT', kind, 'verts', len(ob.data.vertices), 'bones', len(B))
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_scene.gltf(filepath=dst, export_format='GLB', export_image_format='JPEG', export_jpeg_quality=85,

@@ -331,7 +331,7 @@ const AX = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) }
 //      walk Walker 參數、acts 動作表、step 步幅（公尺）、bob 走路點頭、sway 盯地面時脖子左右晃
 function groundTripo(env, cfg) {
   const r = rigged(cfg.name)
-  const k = cfg.H / cfg.h0, LAT = cfg.lat
+  const k = cfg.H / cfg.h0, LAT = cfg.lat, FWD = cfg.fwd ?? V(1, 0, 0)   // FWD：身體前後軸（側傾用）
   const root = new THREE.Group(), inner = new THREE.Group()
   r.model.scale.setScalar(k); inner.add(r.model)
   inner.rotation.y = cfg.rotY
@@ -369,11 +369,25 @@ function groundTripo(env, cfg) {
     // 鳩鴿類走路時頭一前一後（每一步一次）
     const bob = (cfg.bob ?? 0) * c.amp * Math.sin(ph * 2)
     r.reset()
-    r.turn('body', LAT, -c.lean + 0.02 * Math.sin(t * 1.3))
-    r.turn('neck', LAT, -c.neck * 0.8 - bob); r.turn('neck', AX.y, c.yaw * 0.5 + c.sway)
+    // 走路時重心左右換腳（身體側傾）、每一步前後點一下；站著時慢慢呼吸
+    const roll = 0.07 * Math.sin(ph) * c.amp, pitch = 0.035 * Math.sin(ph * 2) * c.amp, breath = 0.025 * Math.sin(t * 1.7)
+    if (r.bones.chest) {
+      // 身體兩節分攤前傾，脖子三節分攤彎曲和伸長，頭整顆不變形
+      r.turn('body', LAT, -c.lean * 0.6 + pitch + 0.015 * Math.sin(t * 1.3)); r.turn('body', FWD, roll)
+      r.turn('chest', LAT, -c.lean * 0.4 + breath - pitch * 0.5); r.turn('chest', FWD, -roll * 0.4)
+      const nb = -c.neck * 0.8 - bob - pitch * 0.5, ny = c.yaw * 0.5 + c.sway
+      for (const [b, f] of [['neck', 0.45], ['neck2', 0.35], ['neck3', 0.2]]) { r.turn(b, LAT, nb * f); r.turn(b, AX.y, ny * f) }
+      r.turn('neck3', FWD, -roll * 0.6)
+      for (const b of ['neck2', 'neck3', 'head']) r.stretch(b, c.reach)
+    } else {
+      r.turn('body', LAT, -c.lean + 0.02 * Math.sin(t * 1.3)); r.turn('body', FWD, roll)
+      r.turn('neck', LAT, -c.neck * 0.8 - bob); r.turn('neck', AX.y, c.yaw * 0.5 + c.sway)
+      r.stretch('head', c.reach)
+    }
     r.turn('head', LAT, -c.neck * 0.3 - c.head + bob * 1.2); r.turn('head', AX.y, c.yaw * 0.6 - c.sway * 0.95)
-    r.stretch('head', c.reach)
-    r.turn('tail', LAT, 0.1 * c.lean)
+    // 尾巴：前傾時翹起、走路時跟著步伐上下左右擺
+    r.turn('tail', LAT, 0.1 * c.lean + 0.06 * Math.sin(ph * 2 + 1) * c.amp); r.turn('tail', AX.y, 0.08 * Math.sin(ph) * c.amp)
+    for (const [wg, sg] of [['wingL', 1], ['wingR', -1]]) r.turn(wg, AX.y, sg * (0.02 * breath / 0.025 + 0.04 * Math.abs(roll) / 0.07))
     for (const [side, off] of [['L', 0], ['R', Math.PI]]) {
       // 身體前傾時大腿往回轉，腳掌留在原地。前半圈抬腳往前跨（lift 用 sin² 起落才不會頓），
       // 後半圈腳踩地往後推；腳掌角度抵掉大腿和小腿的轉動，踩地時保持貼平
@@ -391,12 +405,12 @@ function groundTripo(env, cfg) {
 }
 // 夜鷺（Sketchfab 模型，CC BY）：頭朝 -z
 function nightHeron(env) {
-  return groundTripo(env, { name: 'night-heron-rig', H: 0.85, h0: 1.1, rotY: Math.PI, lat: AX.x,
+  return groundTripo(env, { name: 'night-heron-rig', H: 0.85, h0: 1.1, rotY: Math.PI, lat: AX.x, fwd: AX.z,
     acts: { stand: [5, 3, 7], hunt: [3, 2.5, 5], walk: [1.2, 99, 99], turn: [1, 99, 99], strike: [0.7, 1.4, 1.4], look: [2, 1.5, 3] } })
 }
 // 黑冠麻鷺（ChatGPT 參考圖 → Tripo）：慢慢走、停下來盯地面（脖子左右晃）、很快啄下去
 function malayanHeron(env) {
-  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 1.4,
+  return groundTripo(env, { name: 'heron-rig', H: 0.8, h0: 0.88, rotY: Math.PI / 2, lat: V(0, 0, -1), sway: true, shadow: 0.3, reach: 0.9,
     walk: { radius: 1.6, speed: 0.28 }, step: 0.17, focusY: 0.5,
     acts: { walk: [3, 99, 99], stare: [3, 2.5, 5], strike: [1, 1.4, 1.4], look: [2, 1.5, 3], stand: [2, 2, 4], turn: [1, 99, 99] } })
 }
