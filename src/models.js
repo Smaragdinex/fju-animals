@@ -587,11 +587,20 @@ const BUILD = {
             Object.assign(tg, { lean: 0.45, stretch: 0.15, hp: 0.2, pitch: 0.05 })
             add.lean = 0.07 * Math.sin(gait.phase * Math.PI * 4) * gait.amp
             break
-          case 'stare': Object.assign(tg, { lean: 1.0, stretch: 0.05, hp: 1.0, pitch: 0.22, roll: 0.3 * a.r, yaw: 0.25 * a.r, crouch: 0.012 }); break
-          case 'alert':
-            // 警戒：整隻立起來，脖子伸直朝上，頭水平
-            Object.assign(tg, { pitch: -0.8, crouch: -0.035, lean: 0.1, stretch: 0.55, hp: -0.05, yaw: 0.5 * Math.sin(t * 0.6 + a.r * 3) })
+          case 'stare': {
+            // 盯地面：脖子左右慢慢晃，頭一直對著同一個點（用視差判斷蚯蚓的位置），晃一陣停一陣
+            Object.assign(tg, { lean: 1.0, stretch: 0.12, hp: 1.0, pitch: 0.22, roll: 0.15 * a.r, crouch: 0.012 })
+            const sway = 0.38 * ss(Math.sin(t * 0.45 + a.r * 4), -0.3, 0.3) * Math.sin(t * 3.4)
+            add.nyaw = sway; add.yaw = -0.95 * sway
+            break
+          }
+          case 'alert': {
+            // 警戒：整隻立起來，脖子伸直朝上，頭水平；脖子也會小幅左右晃
+            Object.assign(tg, { pitch: -0.8, crouch: -0.035, lean: 0.1, stretch: 0.55, hp: -0.05, yaw: 0.4 * Math.sin(t * 0.6 + a.r * 3) })
+            const sway = 0.18 * Math.sin(t * 2.6)
+            add.nyaw = sway; add.yaw = -0.8 * sway
             return 4
+          }
           case 'strike':
             if (k < 0.35) Object.assign(tg, { lean: 0.95, hp: 1.05, pitch: 0.25, crouch: 0.015 })
             else if (k < 0.5) Object.assign(tg, { lean: 1.6, hp: 1.35, pitch: 0.45, stretch: 0.6, crouch: 0.03 })
