@@ -1,11 +1,12 @@
 // 輔大的動物鄰居：往下捲，鏡頭依序飛到每種動物出沒的地點
 import * as THREE from 'three'
-import { buildCampus, WATER_Y, useRenderer, waterFx } from './campus.js'
+import { buildCampus, WATER_Y, useRenderer, waterFx, ripple } from './campus.js'
 import { placeAnimal, loadAnimalModels } from './models.js'
 import { buildDetail, foliageNear } from './foliage.js'
 import { ANIMALS } from './animals.js'
 import { snapScroll } from './snap.js'
 import { buildLotus } from './lotus.js'
+import { buildFish } from './fish.js'
 
 const canvas = document.getElementById('scene')
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -77,7 +78,7 @@ story.addEventListener('click', (e) => { const b = e.target.closest('[data-go]')
 
 /* ---------- 場景 ---------- */
 const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vector3(-10, 0, -10) }
-let shots = [], animals = [], pins = [], ready = false, detail = null, lotus = null
+let shots = [], animals = [], pins = [], ready = false, detail = null, lotus = null, fish = null
 
 async function init() {
   useRenderer(renderer)
@@ -102,6 +103,12 @@ async function init() {
     for (let k = 0.2; k <= 1; k += 0.2) pondClear.push([a.target.x + (a.cam.x - a.target.x) * k, a.target.z + (a.cam.z - a.target.z) * k, 1.3])
   }
   lotus = buildLotus(scene, campus.data.areas.filter((a) => a.kind === 'water').map((a) => a.pts), WATER_Y, pondClear)
+  // 池裡的灰色吳郭魚：避開烏龜的石頭
+  const rocks = []
+  for (const a of animals) a.group.updateMatrixWorld(true), a.group.traverse((o) => {
+    if (o.isMesh && o.userData.top !== undefined) { const p = o.getWorldPosition(new THREE.Vector3()); o.geometry.computeBoundingSphere(); rocks.push({ x: p.x, z: p.z, r: o.geometry.boundingSphere.radius * o.getWorldScale(new THREE.Vector3()).x * 0.9 }) }
+  })
+  fish = buildFish(scene, campus.data.areas.filter((a) => a.kind === 'water').map((a) => a.pts), WATER_Y, rocks, ripple)
   // 地面的陽光陰影與天光遮蔽一次烘好，之後地面不再即時算陰影
   const baked = campus.bake(renderer, SUN_DIR)
   console.log(`[fju] 地面烘焙 ${baked.ms} ms`)
@@ -109,7 +116,7 @@ async function init() {
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target }))]
   makePins(campus)
-  Object.assign(window.__fju, { snap, updateShadow, sun, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
+  Object.assign(window.__fju, { fish, lotus, snap, updateShadow, sun, campus, animals, shots, shotAt: (p) => (shotAt(p), { pos: camPos.clone(), target: camTarget.clone() }) })
   resize()
   // 預熱：載入畫面還蓋著的時候，把每一站都先畫一次。著色器編譯、貼圖上傳、陰影都在這時做完，
   // 第一次滑到某一站時才不會卡一下、閃一下。要畫在畫面上（不是 render target），色調對應才是同一組著色器。
@@ -276,6 +283,7 @@ function frame() {
   const active = nearest >= 1 && nearest <= animals.length ? nearest - 1 : -1
   detail?.update(camera.position, t)
   lotus?.update(t, camera.position)
+  if (!window.__fju.pause) fish?.update(t, dt, camera.position)
   // 飛行途中（不在任何一站上）樹葉溶掉的範圍放大
   foliageNear.value = THREE.MathUtils.lerp(2.8, 9, THREE.MathUtils.smoothstep(Math.abs(p - nearest), 0.02, 0.12))
   updatePins(active)

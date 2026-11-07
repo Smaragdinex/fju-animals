@@ -50,6 +50,10 @@ function waterSurface(mat) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         vec2 ws = waterSlope(vWp.xz);
         normal = normalize((viewMatrix * vec4(normalize(vec3(-ws.x, 1.0, -ws.y)), 0.0)).xyz);`)
+      // 往下看水比較透明（看得到水裡的魚），斜斜看過去主要是反射，幾乎不透明
+      .replace('#include <opaque_fragment>', `#include <opaque_fragment>
+        { float fr = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 3.0);
+          gl_FragColor.a = mix(0.5, 0.97, fr); }`)
   }
 }
 
