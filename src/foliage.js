@@ -247,6 +247,18 @@ const gNoise = (x, y) => {
   return l(l(gHash(ix, iy), gHash(ix + 1, iy), fx), l(gHash(ix, iy + 1), gHash(ix + 1, iy + 1), fx), fy)
 }
 
+// 和 ground.js 的 GRASS_TINT_GLSL 同一套：大塊乾黃／濃綠的色差
+const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+function grassTint(c, x, z) {
+  const m1 = sm(0.1, 0.9, gNoise(x * 0.045, z * 0.045) * 0.7 + gNoise(x * 0.11 + 5, z * 0.11 + 5) * 0.3), m2 = gNoise(x * 0.17 + 13, z * 0.17 + 13)
+  const dry = sm(0.5, 0.85, m1) * 0.7 + sm(0.6, 0.9, m2) * 0.35
+  const lush = sm(0.5, 0.1, m1) * 0.5
+  c.r += (c.r * 1.18 - c.r) * dry; c.g += (c.g * 1.04 - c.g) * dry; c.b += (c.b * 0.55 - c.b) * dry
+  c.multiplyScalar(1 - 0.25 * lush)
+  const cl = sm(0.15, 0.85, gNoise(x * 2.7 + 3.1, z * 2.7 + 3.1) * 0.55 + gNoise(x * 7.3 - 1.7, z * 7.3 - 1.7) * 0.45)
+  c.multiplyScalar(0.72 + cl * 0.56)
+}
+
 function grassPatch(ground, cx, cz, R, peak, mat) {
   const cv = ground.map.image, k = cv.width / CORE.size
   const px0 = Math.floor((cx - R - CORE.x0) * k), pz0 = Math.floor((cz - R - CORE.z0) * k), pw = Math.ceil(2 * R * k) + 2
@@ -275,6 +287,7 @@ function grassPatch(ground, cx, cz, R, peak, mat) {
     if (!(G8 > R8 + 12 && G8 > B8 + 12)) continue      // 只長在綠地上
     const gn = gNoise(x * 0.35, z * 0.35) * 0.6 + gNoise(x * 2.3, z * 2.3) * 0.25 + gHash(Math.floor(x * 9), Math.floor(z * 9)) * 0.15
     base.setRGB(R8 / 255, G8 / 255, B8 / 255, THREE.SRGBColorSpace).multiplyScalar(0.86 + gn * 0.26)
+    grassTint(base, x, z)
     const u = Math.random()
     if (u < 0.3) {
       // 一叢：3～7 片從同一點往外散開

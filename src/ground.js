@@ -7,8 +7,8 @@ export const CORE = { x0: -560, z0: -560, size: 1120 }
 const FAR = { x0: -2000, z0: -2000, size: 4000 }
 
 const AREA_STYLE = {
-  parking: ['#b9bab4', 1], wood: ['#5f9446', 2], grass: ['#8cc067', 3], park: ['#86bb60', 3],
-  flower: ['#d7a3b4', 4], pitch: ['#c9805a', 5], tennis: ['#4f8f7c', 6], field: ['#7db65a', 4],
+  parking: ['#b9bab4', 1], wood: ['#5f9446', 2], grass: ['#7fae58', 3], park: ['#78a852', 3],
+  flower: ['#d7a3b4', 4], pitch: ['#c9805a', 5], tennis: ['#4f8f7c', 6], field: ['#76ab52', 4],
 }
 const areaOf = (pts) => {
   let s = 0
@@ -97,29 +97,99 @@ function plane(ext, y) {
   return g
 }
 
+// 草地近看的細節貼圖：從正上方看一小塊草（約 1.3 公尺見方），可以無縫拼貼。
+// 灰色 128 代表「不改顏色」，比較亮的是曬到太陽的草尖、比較暗的是草葉之間的縫和泥土。
+let _grassTex
+function grassDetailTexture() {
+  if (_grassTex) return _grassTex
+  const N = 512, cv = document.createElement('canvas')
+  cv.width = cv.height = N
+  const c = cv.getContext('2d')
+  c.fillStyle = 'rgb(118,120,112)'; c.fillRect(0, 0, N, N)
+  let s = 11
+  const r = () => ((s = (s * 16807) % 2147483647) / 2147483647)
+  const wrap = (fn) => { for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) fn(dx, dy) }
+  // 草葉之間的暗縫、零星泥土
+  for (let i = 0; i < 900; i++) {
+    const x = r() * N, y = r() * N, rad = 1 + r() * 3
+    c.fillStyle = `rgba(${55 + r() * 20},${58 + r() * 18},${45 + r() * 12},${0.35 + r() * 0.4})`
+    wrap((dx, dy) => { c.beginPath(); c.arc(x + dx, y + dy, rad, 0, 7); c.fill() })
+  }
+  // 草葉：短筆畫，方向亂，少數是枯黃的；最後畫的比較亮（最上面那層曬得到太陽）
+  c.lineCap = 'round'
+  for (let i = 0; i < 14000; i++) {
+    const t = i / 14000
+    const x = r() * N, y = r() * N, a = r() * Math.PI * 2, L = 5 + r() * 16
+    const dry = r() < 0.06
+    const v = 85 + t * 85 + r() * 25
+    c.strokeStyle = dry ? `rgba(${v * 1.15},${v * 1.05},${v * 0.6},0.9)` : `rgba(${v * 0.95},${v * 1.02},${v * 0.82},0.85)`
+    c.lineWidth = 0.8 + r() * 1.8
+    const ex = Math.cos(a) * L, ey = Math.sin(a) * L, bend = (r() - 0.5) * L * 0.5
+    wrap((dx, dy) => {
+      c.beginPath(); c.moveTo(x + dx, y + dy)
+      c.quadraticCurveTo(x + dx + ex * 0.5 - ey / L * bend, y + dy + ey * 0.5 + ex / L * bend, x + dx + ex, y + dy + ey)
+      c.stroke()
+    })
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.anisotropy = 8
+  return (_grassTex = tex)
+}
+
+// 草地的大塊色差（有的地方比較乾黃、有的比較濃綠）。foliage.js 的 3D 草葉用一樣的算法，顏色才接得上。
+export const GRASS_TINT_GLSL = `
+  vec3 grassTint(vec3 col, vec2 p) {
+    float m1 = smoothstep(0.1, 0.9, gNoise(p * 0.045) * 0.7 + gNoise(p * 0.11 + 5.0) * 0.3), m2 = gNoise(p * 0.17 + 13.0);
+    float dry = smoothstep(0.5, 0.85, m1) * 0.7 + smoothstep(0.6, 0.9, m2) * 0.35;
+    float lush = (1.0 - smoothstep(0.1, 0.5, m1)) * 0.5;
+    col = mix(col, col * vec3(1.18, 1.04, 0.55), dry);
+    return col * (1.0 - 0.25 * lush);
+  }`
+
 // 地面材質：貼圖上色，烘好的光影乘到直射光（R）與天光（G）上，再加一層世界座標的細雜訊
-function groundMaterial(map, bake) {
+function groundMaterial(map, bake, detail = true) {
   const m = new THREE.MeshStandardMaterial({ map, roughness: 1 })
   m.userData.bake = { value: bake }
+  const gTex = { value: grassDetailTexture() }
+  // 近、遠兩塊地面的 onBeforeCompile 字面一樣，不給不同的 key 會共用同一支程式（遠的沒有草葉貼圖）
+  m.customProgramCacheKey = () => (detail ? 'groundD' : 'groundF')
   m.onBeforeCompile = (sh) => {
     sh.uniforms.bakeMap = m.userData.bake
+    sh.uniforms.grassTex = gTex
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vGp;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvGp = (modelMatrix * vec4(transformed, 1.0)).xz;')
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec2 vGp;
-        uniform sampler2D bakeMap;
+        uniform sampler2D bakeMap, grassTex;
         float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float gNoise(vec2 p) {
           vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(gHash(i), gHash(i + vec2(1, 0)), f.x), mix(gHash(i + vec2(0, 1)), gHash(i + vec2(1, 1)), f.x), f.y);
-        }`)
+        }
+        ${GRASS_TINT_GLSL}`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         // 近看才有的細節：草地明暗斑塊 + 細碎顆粒；離鏡頭遠就淡掉，避免俯瞰時閃爍
-        float gFade = 1.0 - smoothstep(60.0, 220.0, length(vViewPosition));
+        float vd = length(vViewPosition);
+        float gFade = 1.0 - smoothstep(60.0, 220.0, vd);
         float gn = gNoise(vGp * 0.35) * 0.6 + gNoise(vGp * 2.3) * 0.25 + gHash(floor(vGp * 9.0)) * 0.15;
-        diffuseColor.rgb *= mix(1.0, 0.86 + gn * 0.26, gFade);`)
+        diffuseColor.rgb *= mix(1.0, 0.86 + gn * 0.26, gFade);
+        // 草地（貼圖上綠色的地方）：大塊乾濕色差 + 近看的草葉貼圖（兩種大小、轉個角度疊，看不出重複）
+        vec3 mc = diffuseColor.rgb;
+        float isGrass = smoothstep(0.02, 0.06, mc.g - max(mc.r, mc.b));
+        diffuseColor.rgb = mix(diffuseColor.rgb, grassTint(diffuseColor.rgb, vGp), isGrass);
+        ${detail ? `
+        vec2 q1 = vGp / 1.3, q2 = mat2(0.8, -0.6, 0.6, 0.8) * vGp / 3.1;
+        vec3 d1 = texture2D(grassTex, q1).rgb, d2 = texture2D(grassTex, q2).rgb;
+        vec3 det = (d1 * 0.65 + d2 * 0.35) * 2.15;
+        float dFade = 1.0 - smoothstep(25.0, 140.0, vd);
+        // 中等大小的草叢明暗（10～80 公分），貼圖的草葉在 20 公尺外就糊成一片，這層撐住中景的質感
+        float cl = smoothstep(0.15, 0.85, gNoise(vGp * 2.7 + 3.1) * 0.55 + gNoise(vGp * 7.3 - 1.7) * 0.45);
+        float clFade = 1.0 - smoothstep(50.0, 260.0, vd);
+        diffuseColor.rgb *= mix(1.0, 0.72 + cl * 0.56, isGrass * clFade);
+        diffuseColor.rgb *= mix(vec3(1.0), det, isGrass * dFade * 0.9);` : ''}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec2 bk = texture2D(bakeMap, vMapUv).rg;
         reflectedLight.directDiffuse *= bk.r;
@@ -136,7 +206,7 @@ export function buildGround(scene, data) {
   // 還沒烘之前先給全白，畫面不會一片黑
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1)
   white.needsUpdate = true
-  const farMesh = new THREE.Mesh(plane(FAR, -0.05), groundMaterial(far, white))
+  const farMesh = new THREE.Mesh(plane(FAR, -0.05), groundMaterial(far, white, false))
   const nearMat = groundMaterial(near, white)
   const nearMesh = new THREE.Mesh(plane(CORE, 0), nearMat)
   scene.add(farMesh, nearMesh)

@@ -143,6 +143,102 @@ function ribbon(pts, w, y) {
   return g
 }
 
+
+/* ---------- 建築外牆：窗戶、窗台、牆面磁磚和雨痕都在著色器裡畫 ---------- */
+// 牆面座標：u 是沿著這面牆的水平距離（用牆的法線算出牆的方向），y 是高度。
+// 每 3.6 公尺一層樓、每 2.4 公尺一扇窗；窗框、中間的直框、窗台、窗台下的雨痕、玻璃反射天空、
+// 有的窗拉了窗簾。窗格小到一個像素以下時（遠看）改成平均顏色，不會閃。
+// 屋頂：水泥地的深淺斑塊和排水的污漬。
+function facade(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\nvarying vec3 vWn;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWn = normalize(mat3(modelMatrix) * objectNormal);')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWp;
+        varying vec3 vWn;
+        float fHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float fNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(fHash(i), fHash(i + vec2(1, 0)), f.x), mix(fHash(i + vec2(0, 1)), fHash(i + vec2(1, 1)), f.x), f.y);
+        }
+        // 抗鋸齒的方框：x 在 [a, b] 之間是 1，邊緣用螢幕上的像素寬度柔化
+        float box(float x, float a, float b, float w) { return smoothstep(a - w, a + w, x) - smoothstep(b - w, b + w, x); }
+        float gWin = 0.0, gWall = 0.0;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        gWall = 1.0 - step(0.5, abs(vWn.y));
+        vec2 wn = normalize(vWn.xz + 1e-5);
+        float u = dot(vWp.xz, vec2(-wn.y, wn.x));
+        vec2 cell = vec2(u / 2.4, vWp.y / 3.6);
+        vec2 f = fract(cell), id = floor(cell);
+        vec2 aa = fwidth(cell) * 0.75 + 1e-4;
+        float far = smoothstep(0.08, 0.3, max(aa.x, aa.y));
+        float rnd = fHash(id + floor(vWp.xz * 0.02) * 7.0);
+        vec3 wall = diffuseColor.rgb;
+        if (gWall > 0.5) {
+          float base = step(vWp.y, 0.7);
+          float upper = step(1.2, vWp.y);
+          // 牆面：小磁磚的縫（近看才畫）+ 大片的深淺
+          float tile = box(fract(vWp.y / 0.12), 0.06, 0.94, fwidth(vWp.y / 0.12)) * box(fract(u / 0.24), 0.04, 0.96, fwidth(u / 0.24));
+          float tFade = 1.0 - smoothstep(0.05, 0.15, fwidth(vWp.y / 0.12));
+          wall *= mix(1.0, 0.93 + 0.07 * tile, tFade);
+          wall *= 0.94 + 0.08 * fNoise(vec2(u, vWp.y) * 0.25) + 0.04 * fNoise(vec2(u, vWp.y) * 1.7);
+          // 每四扇窗一根柱子：稍微凸出、比較亮
+          float col = box(fract(u / 9.6), 0.0, 0.05, fwidth(u / 9.6)) + box(fract(u / 9.6), 0.95, 1.0, fwidth(u / 9.6));
+          wall *= 1.0 + 0.06 * col;
+          // 窗戶：一樓比較高（玻璃門窗）
+          float y0 = id.y < 0.5 ? 0.22 : 0.3, y1 = id.y < 0.5 ? 0.86 : 0.8;
+          float win = box(f.x, 0.16, 0.84, aa.x) * box(f.y, y0, y1, aa.y) * upper * (1.0 - col);
+          float glass = box(f.x, 0.2, 0.8, aa.x) * box(f.y, y0 + 0.035, y1 - 0.03, aa.y) * (1.0 - box(f.x, 0.49, 0.51, aa.x)) * win;
+          float frame = win - glass;
+          float sill = box(f.x, 0.13, 0.87, aa.x) * box(f.y, y0 - 0.035, y0, aa.y) * upper * (1.0 - col);
+          // 窗台下的雨痕：越往下越淡，每扇窗不一樣
+          float streak = box(f.x, 0.2 + 0.1 * rnd, 0.8 - 0.1 * rnd, aa.x) * smoothstep(y0 - 0.45, y0 - 0.04, f.y) * step(f.y, y0 - 0.035) * upper * (1.0 - col);
+          wall *= 1.0 - 0.12 * streak * (0.4 + rnd);
+          // 窗台下面一條陰影（窗台凸出來擋光）
+          wall *= 1.0 - 0.25 * box(f.y, y0 - 0.07, y0 - 0.035, aa.y) * box(f.x, 0.13, 0.87, aa.x) * upper * (1.0 - col);
+          vec3 c = wall;
+          c = mix(c, vec3(0.78, 0.79, 0.78), frame);
+          c = mix(c, wall * 1.08, sill);
+          // 玻璃：暗色，反射在後面加；窗簾（米色、從上往下拉一段）
+          float curtain = step(0.55, rnd) * step(1.0 - (0.25 + 0.6 * fract(rnd * 7.3)), (f.y - y0) / (y1 - y0));
+          vec3 glc = mix(vec3(0.07, 0.09, 0.11), vec3(0.55, 0.5, 0.42), curtain * 0.8);
+          glc *= 1.0 - 0.6 * smoothstep(y1 - 0.12, y1 - 0.03, f.y);   // 上緣有窗楣的陰影
+          c = mix(c, glc, glass);
+          gWin = glass * (1.0 - curtain * 0.7);
+          // 遠看：窗格太小，換成平均的顏色
+          vec3 avg = mix(wall, vec3(0.2, 0.24, 0.27), 0.3 * upper);
+          c = mix(c, avg, far);
+          gWin *= 1.0 - far;
+          c *= mix(1.0, 0.72, base);
+          diffuseColor.rgb = c;
+        } else {
+          // 屋頂：水泥的深淺斑塊和污漬
+          vec2 q = vWp.xz;
+          diffuseColor.rgb *= 0.85 + 0.12 * fNoise(q * 0.3) + 0.06 * fNoise(q * 2.1) - 0.1 * smoothstep(0.6, 0.85, fNoise(q * 0.12 + 4.0));
+        }
+        diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(0.0, 5.0, vWp.y));`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(roughnessFactor, 0.08, gWin);`)
+      .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
+        // 玻璃反射天空：看得越斜反射越多
+        {
+          vec3 V = normalize(-vViewPosition);
+          float fr = 0.05 + 0.45 * pow(1.0 - clamp(dot(normal, V), 0.0, 1.0), 5.0);
+          vec3 Rw = reflect(normalize(vWp - cameraPosition), normalize(vWn));
+          vec3 sky = mix(vec3(0.42, 0.45, 0.42), mix(vec3(0.75, 0.82, 0.86), vec3(0.45, 0.62, 0.8), smoothstep(0.0, 0.6, Rw.y)), smoothstep(-0.08, 0.05, Rw.y));
+          // 對面的樹和建築：反射往下看的那段是暗綠灰
+          sky = mix(sky, vec3(0.16, 0.2, 0.17), (1.0 - smoothstep(0.05, 0.4, Rw.y + 0.15 * fNoise(vWp.xz * 0.15 + vWp.y * 0.1))) * 0.8);
+          gWinRefl = sky * fr * gWin * 0.22;
+        }`)
+      .replace('#include <common>', '#include <common>\nvec3 gWinRefl = vec3(0.0);')
+      .replace('#include <opaque_fragment>', `outgoingLight += gWinRefl;
+        #include <opaque_fragment>`)
+  }
+  mat.customProgramCacheKey = () => 'facade1'
+}
+
 export async function buildCampus(scene) {
   const data = await (await fetch('campus.json')).json()
   const inCampus = (p) => data.boundary.some((r) => inside(p, r))
@@ -208,21 +304,7 @@ export async function buildCampus(scene) {
     }
   }
   const bMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 })
-  bMat.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\nvarying float vWall;')
-      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWall = 1.0 - step(0.5, abs(normal.y));')
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\nvarying float vWall;')
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        float fl = fract(vWp.y / 3.6);
-        float band = step(0.38, fl) * step(fl, 0.78) * step(1.2, vWp.y);
-        float mull = step(0.12, fract((vWp.x + vWp.z) / 2.4));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.36, 0.46, 0.52), band * mull * vWall * 0.85);
-        // 牆腳：一圈深色基座，越靠近地面越暗（地面反射被擋住的效果）
-        diffuseColor.rgb *= mix(1.0, 0.72, vWall * step(vWp.y, 0.7));
-        diffuseColor.rgb *= mix(0.68, 1.0, smoothstep(0.0, 5.0, vWp.y));`)
-  }
+  facade(bMat)
   const buildings = new THREE.Mesh(mergeGeometries(bGeos), bMat)
   buildings.castShadow = buildings.receiveShadow = true
   scene.add(buildings)
