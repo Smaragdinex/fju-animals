@@ -91,6 +91,43 @@ function paint(data, ext, N, detail) {
   return tex
 }
 
+// 地面材質遮罩（和地面貼圖同一個範圍）：R＝柏油（車道、停車場）、G＝人行道地磚、B＝水泥（路緣、廣場空地）、黑＝其他。
+// 著色器靠它決定每個地方要畫哪一種近看細節；用比較低的解析度就夠，邊界由地面貼圖本身決定。
+function paintMask(data, ext, N) {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = N
+  const c = cv.getContext('2d')
+  const k = N / ext.size
+  const path = (pts, close = true) => {
+    c.beginPath()
+    pts.forEach(([x, z], i) => c[i ? 'lineTo' : 'moveTo']((x - ext.x0) * k, (z - ext.z0) * k))
+    if (close) c.closePath()
+  }
+  c.fillStyle = '#0000ff'; c.fillRect(0, 0, N, N)
+  for (const a of data.areas) {
+    c.fillStyle = a.kind === 'parking' ? '#ff0000' : '#000000'
+    path(a.pts); c.fill()
+  }
+  const roads = data.roads.filter((r) => r.kind !== 'construction' && r.kind !== 'corridor')
+  const isWalk = (r) => r.kind === 'footway' || r.kind === 'steps' || r.kind === 'pedestrian'
+  const car = roads.filter((r) => !isWalk(r)), walk = roads.filter(isWalk)
+  c.lineCap = c.lineJoin = 'round'
+  const stroke = (rs, color, extra) => {
+    c.strokeStyle = color
+    for (const r of rs) { c.lineWidth = Math.max(1, (r.w + extra) * k); path(r.pts, false); c.stroke() }
+  }
+  stroke(car, '#0000ff', 1.2)
+  stroke(walk, '#0000ff', 0.5)
+  stroke(car, '#ff0000', 0)
+  stroke(walk, '#00ff00', 0)
+  c.fillStyle = '#000000'
+  for (const a of data.areas) if (a.kind === 'water') { path(a.pts); c.fill() }
+  for (const b of data.buildings) if (b.pts.length > 2) { path(b.pts); c.fill() }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.anisotropy = 4
+  return tex
+}
+
 function plane(ext, y) {
   const g = new THREE.PlaneGeometry(ext.size, ext.size).rotateX(-Math.PI / 2)
   g.translate(ext.x0 + ext.size / 2, y, ext.z0 + ext.size / 2)
@@ -147,29 +184,125 @@ export const GRASS_TINT_GLSL = `
     return col * (1.0 - 0.25 * lush);
   }`
 
+// 路面近看的細節，依遮罩分三種：
+//   柏油：細碎的石子顆粒、一塊塊補過的新柏油（比較黑）、裂縫、油漬、靠路緣的地方積灰變暗；標線會磨損斷斷續續
+//   地磚：20×10 公分的磚交錯排、每塊深淺不同、磚縫
+//   水泥：1.5 公尺一塊的伸縮縫、水漬斑塊
+// 細節小於一個像素時（遠看）淡掉，不會閃。
+export const ROAD_GLSL = `
+  vec2 rHash2(vec2 p) { return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453); }
+  // 裂縫：Voronoi 兩個最近點的距離差很小的地方就是邊界
+  float crackLine(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    float d1 = 8.0, d2 = 8.0;
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(float(x), float(y));
+      vec2 r = o + rHash2(i + o) - f;
+      float d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+    return sqrt(d2) - sqrt(d1);
+  }
+  float rBox(float x, float a, float b, float w) { return smoothstep(a - w, a + w, x) - smoothstep(b - w, b + w, x); }
+  vec3 roadDetail(vec3 col, vec2 p, vec2 uv, float vd) {
+    vec3 mk = texture2D(roadMask, uv).rgb;
+    if (mk.r + mk.g + mk.b < 0.02) return col;
+    float near = 1.0 - smoothstep(30.0, 120.0, vd);
+    // 柏油
+    if (mk.r > 0.01) {
+      vec3 c = col;
+      float lum = dot(col, vec3(0.333));
+      float line = smoothstep(0.35, 0.55, lum);             // 白色標線（地面貼圖上比路面亮很多）
+      c *= 0.82;                                            // 柏油比原本的灰暗一點、偏暖
+      c *= vec3(1.0, 0.98, 0.95);
+      // 大塊的深淺（新舊路面）、補過的長方形新柏油
+      c *= 0.88 + 0.22 * gNoise(p * 0.07) + 0.08 * gNoise(p * 0.6);
+      vec2 pc = floor(p / vec2(4.0, 2.6) + vec2(0.3, 0.7));
+      vec2 pf = fract(p / vec2(4.0, 2.6) + vec2(0.3, 0.7));
+      float patchOn = step(0.9, gHash(pc)) * rBox(pf.x, 0.15, 0.85, 0.01) * rBox(pf.y, 0.2, 0.8, 0.015);
+      c *= 1.0 - 0.28 * patchOn;
+      // 油漬
+      c *= 1.0 - 0.18 * smoothstep(0.62, 0.85, gNoise(p * 0.45 + 17.0)) * smoothstep(0.5, 0.7, gNoise(p * 0.05 + 3.0));
+      // 靠路緣：遮罩模糊後不到 1 的地方就是路邊，積灰變暗
+      float edge = texture2D(roadMask, uv, 4.0).r;
+      c *= mix(0.86, 1.0, smoothstep(0.55, 0.95, edge));
+      // 近看：石子顆粒、裂縫
+      if (near > 0.0) {
+        float g = gHash(floor(p * 55.0));
+        float stone = step(0.9, g) * 0.35 - step(g, 0.12) * 0.2 + (gHash(floor(p * 140.0)) - 0.5) * 0.12;
+        float gf = 1.0 - smoothstep(0.3, 1.2, fwidth(p.x * 55.0));
+        c *= 1.0 + stone * gf * near;
+        // 裂縫：只在少數老舊的路段，線條歪斜、粗細不一，不要排成整齊的網格
+        float area = smoothstep(0.62, 0.8, gNoise(p * 0.06 + 41.0));
+        vec2 wp = p * 0.45 + vec2(gNoise(p * 1.7), gNoise(p * 1.7 + 9.0)) * 0.8;
+        float cw = 0.012 + 0.025 * gNoise(p * 2.3);
+        float cr = (1.0 - smoothstep(0.0, cw + fwidth(wp.x) * 0.8, crackLine(wp))) * smoothstep(0.35, 0.6, gNoise(p * 0.9 + 5.0));
+        c *= 1.0 - 0.35 * cr * area * near * (1.0 - patchOn);
+      }
+      // 標線磨損：斑駁地露出底下的柏油
+      float wear = smoothstep(0.35, 0.65, gNoise(p * 3.0) * 0.6 + gNoise(p * 0.4) * 0.4);
+      c = mix(c, col * 0.95, line * (1.0 - 0.45 * wear));
+      col = mix(col, c, mk.r);
+    }
+    // 地磚
+    if (mk.g > 0.01) {
+      vec2 b = p / vec2(0.2, 0.1);
+      b.x += 0.5 * mod(floor(b.y), 2.0);
+      vec2 id = floor(b), f = fract(b);
+      vec2 w = fwidth(b);
+      float pf = 1.0 - smoothstep(0.25, 0.6, max(w.x, w.y));
+      float grout = 1.0 - rBox(f.x, 0.04, 0.96, w.x) * rBox(f.y, 0.08, 0.92, w.y);
+      float h = gHash(id);
+      vec3 c = col * vec3(0.98, 0.95, 0.9);
+      c *= mix(1.0, 0.86 + 0.24 * h, pf);
+      c = mix(c, c * vec3(1.05, 0.9, 0.82), step(0.85, gHash(id + 7.0)) * pf * 0.6);   // 少數偏紅的磚
+      c *= mix(1.0, 0.68, grout * pf);
+      c *= mix(1.0, 0.94, pf);                       // 遠看時磚縫平均起來的暗度
+      c *= 0.9 + 0.12 * gNoise(p * 0.5);             // 髒污
+      col = mix(col, c, mk.g);
+    }
+    // 水泥：伸縮縫、水漬
+    if (mk.b > 0.01) {
+      vec2 s = p / 1.5;
+      vec2 f = fract(s), w = fwidth(s);
+      float jf = 1.0 - smoothstep(0.05, 0.2, max(w.x, w.y));
+      float joint = 1.0 - rBox(f.x, 0.008, 0.992, w.x) * rBox(f.y, 0.008, 0.992, w.y);
+      vec3 c = col;
+      c *= 0.9 + 0.1 * gHash(floor(s)) * jf + 0.1 * gNoise(p * 0.3);
+      c *= 1.0 - 0.12 * smoothstep(0.6, 0.85, gNoise(p * 0.8 + 9.0));
+      c *= mix(1.0, 0.8, joint * jf);
+      if (near > 0.0) c *= 1.0 + (gHash(floor(p * 80.0)) - 0.5) * 0.08 * near * (1.0 - smoothstep(0.3, 1.0, fwidth(p.x * 80.0)));
+      col = mix(col, c, mk.b);
+    }
+    return col;
+  }`
+
 // 地面材質：貼圖上色，烘好的光影乘到直射光（R）與天光（G）上，再加一層世界座標的細雜訊
-function groundMaterial(map, bake, detail = true) {
+function groundMaterial(map, bake, detail = true, mask = null) {
   const m = new THREE.MeshStandardMaterial({ map, roughness: 1 })
   m.userData.bake = { value: bake }
-  const gTex = { value: grassDetailTexture() }
+  const gTex = { value: grassDetailTexture() }, mTex = { value: mask }
+  m.userData.mask = mask   // 除錯用：可以讀遮罩的 canvas 對照
   // 近、遠兩塊地面的 onBeforeCompile 字面一樣，不給不同的 key 會共用同一支程式（遠的沒有草葉貼圖）
   m.customProgramCacheKey = () => (detail ? 'groundD' : 'groundF')
   m.onBeforeCompile = (sh) => {
     sh.uniforms.bakeMap = m.userData.bake
     sh.uniforms.grassTex = gTex
+    sh.uniforms.roadMask = mTex
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vGp;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvGp = (modelMatrix * vec4(transformed, 1.0)).xz;')
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec2 vGp;
-        uniform sampler2D bakeMap, grassTex;
+        uniform sampler2D bakeMap, grassTex, roadMask;
         float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float gNoise(vec2 p) {
           vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(gHash(i), gHash(i + vec2(1, 0)), f.x), mix(gHash(i + vec2(0, 1)), gHash(i + vec2(1, 1)), f.x), f.y);
         }
-        ${GRASS_TINT_GLSL}`)
+        ${GRASS_TINT_GLSL}
+        ${ROAD_GLSL}`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         // 近看才有的細節：草地明暗斑塊 + 細碎顆粒；離鏡頭遠就淡掉，避免俯瞰時閃爍
         float vd = length(vViewPosition);
@@ -189,7 +322,8 @@ function groundMaterial(map, bake, detail = true) {
         float cl = smoothstep(0.15, 0.85, gNoise(vGp * 2.7 + 3.1) * 0.55 + gNoise(vGp * 7.3 - 1.7) * 0.45);
         float clFade = 1.0 - smoothstep(50.0, 260.0, vd);
         diffuseColor.rgb *= mix(1.0, 0.72 + cl * 0.56, isGrass * clFade);
-        diffuseColor.rgb *= mix(vec3(1.0), det, isGrass * dFade * 0.9);` : ''}`)
+        diffuseColor.rgb *= mix(vec3(1.0), det, isGrass * dFade * 0.9);
+        diffuseColor.rgb = roadDetail(diffuseColor.rgb, vGp, vMapUv, vd);` : ''}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec2 bk = texture2D(bakeMap, vMapUv).rg;
         reflectedLight.directDiffuse *= bk.r;
@@ -207,7 +341,7 @@ export function buildGround(scene, data) {
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1)
   white.needsUpdate = true
   const farMesh = new THREE.Mesh(plane(FAR, -0.05), groundMaterial(far, white, false))
-  const nearMat = groundMaterial(near, white)
+  const nearMat = groundMaterial(near, white, true, paintMask(data, CORE, maxTex / 2))
   const nearMesh = new THREE.Mesh(plane(CORE, 0), nearMat)
   scene.add(farMesh, nearMesh)
   return {
