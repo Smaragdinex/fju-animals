@@ -80,9 +80,13 @@ story.addEventListener('click', (e) => { const b = e.target.closest('[data-go]')
 const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vector3(-10, 0, -10) }
 let shots = [], animals = [], pins = [], ready = false, detail = null, lotus = null, fish = null
 
+// 載入畫面上顯示目前做到哪一步（index.html 的 __fjuStep），讓畫面有機會更新
+const step = async (s) => { window.__fjuStep?.(s); console.log('[fju] 步驟', s, Math.round(performance.now())); await new Promise((r) => setTimeout(r, 0)) }
 async function init() {
   useRenderer(renderer)
+  await step('地圖和動物模型')
   const [campus] = await Promise.all([buildCampus(scene), loadAnimalModels()])
+  await step('放動物')
   animals = ANIMALS.map((def) => {
     const a = placeAnimal(def, WATER_Y)
     scene.add(a.group)
@@ -102,17 +106,21 @@ async function init() {
     pondClear.push([a.def.spot[0], a.def.spot[1], 2.6])
     for (let k = 0.2; k <= 1; k += 0.2) pondClear.push([a.target.x + (a.cam.x - a.target.x) * k, a.target.z + (a.cam.z - a.target.z) * k, 1.3])
   }
+  await step('荷花')
   lotus = buildLotus(scene, campus.data.areas.filter((a) => a.kind === 'water').map((a) => a.pts), WATER_Y, pondClear)
   // 池裡的灰色吳郭魚：避開烏龜的石頭
   const rocks = []
   for (const a of animals) a.group.updateMatrixWorld(true), a.group.traverse((o) => {
     if (o.isMesh && o.userData.top !== undefined) { const p = o.getWorldPosition(new THREE.Vector3()); o.geometry.computeBoundingSphere(); rocks.push({ x: p.x, z: p.z, r: o.geometry.boundingSphere.radius * o.getWorldScale(new THREE.Vector3()).x * 0.9 }) }
   })
+  await step('魚')
   fish = buildFish(scene, campus.data.areas.filter((a) => a.kind === 'water').map((a) => a.pts), WATER_Y, rocks, ripple)
   // 地面的陽光陰影與天光遮蔽一次烘好，之後地面不再即時算陰影
+  await step('烘焙光影')
   const baked = campus.bake(renderer, SUN_DIR)
   console.log(`[fju] 地面烘焙 ${baked.ms} ms`)
   // 近景的草葉和樹冠葉片（一次只畫鏡頭所在的那一處）
+  await step('草葉')
   detail = buildDetail(scene, campus.ground, animals, campus.treeBlobs)
   shots = [OVERVIEW, ...animals.map((a) => ({ pos: a.cam, target: a.target }))]
   makePins(campus)
@@ -120,6 +128,7 @@ async function init() {
   resize()
   // 預熱：載入畫面還蓋著的時候，把每一站都先畫一次。著色器編譯、貼圖上傳、陰影都在這時做完，
   // 第一次滑到某一站時才不會卡一下、閃一下。要畫在畫面上（不是 render target），色調對應才是同一組著色器。
+  await step('預熱每一站')
   const t0 = performance.now()
   for (const s of shots) {
     camera.position.copy(s.pos); camera.lookAt(s.target); camera.updateMatrixWorld()
@@ -129,6 +138,7 @@ async function init() {
     for (const a of animals) a.update(0, 0.016)
     renderer.render(scene, camera)
   }
+  await step('編譯著色器')
   await renderer.compileAsync(scene, camera)
   console.log(`[fju] 預熱 ${Math.round(performance.now() - t0)} ms`)
   ready = true

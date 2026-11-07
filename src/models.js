@@ -289,7 +289,14 @@ export async function loadAnimalModels() {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  await Promise.all(['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig', 'bulbul-rig', 'whiteeye-rig', 'treepie-rig', 'dove-rig', 'heron-rig'].map((n) => L.loadAsync(`models/${n}.glb?v=${VER}`).then((g) => { GLB[n] = g.scene })))
+  // 下載進度顯示在載入畫面上（手機網路慢時才知道不是當掉）
+  const names = ['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig', 'bulbul-rig', 'whiteeye-rig', 'treepie-rig', 'dove-rig', 'heron-rig']
+  const got = {}, tot = {}
+  const report = () => {
+    const a = Object.values(got).reduce((x, y) => x + y, 0), b = Object.values(tot).reduce((x, y) => x + y, 0)
+    if (b) window.__fjuStep?.(`下載動物模型 ${(a / 1048576).toFixed(1)} / ${(b / 1048576).toFixed(1)} MB`)
+  }
+  await Promise.all(names.map((n) => L.loadAsync(`models/${n}.glb?m=${MODEL_VER}`, (e) => { got[n] = e.loaded; if (e.total) tot[n] = e.total; report() }).then((g) => { GLB[n] = g.scene })))
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
@@ -325,7 +332,9 @@ function rigged(name, { straight = {} } = {}) {
   }
 }
 // 版本號跟著 index.html 的 ?v= 走，模型檔才不會用到快取的舊版
-const VER = new URL(import.meta.url).searchParams.get('v') ?? ''
+// 模型的版本號：只有模型檔真的改了才會變（tools/bump-version.sh 依模型檔內容算），
+// 改程式重新部署時手機不用再把 12 MB 的模型重下載一次。
+const MODEL_VER = '73fd259d'
 const AX = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) }
 // 腳趾（toeL0a → toeL0b …，Blender 自動找的）：彎曲軸 = 腳趾方向 × 往下，繞它正轉 = 趾尖往下勾
 function toesOf(r, sd) {

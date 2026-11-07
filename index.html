@@ -4,19 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>輔大的動物鄰居</title>
-<link rel="stylesheet" href="style.css?v=1794053524">
+<link rel="stylesheet" href="style.css?v=1794054286">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.174.0/examples/jsm/",
-  "./src/campus.js": "./src/campus.js?v=1794053524",
-  "./src/ground.js": "./src/ground.js?v=1794053524",
-  "./src/foliage.js": "./src/foliage.js?v=1794053524",
-  "./src/models.js": "./src/models.js?v=1794053524",
-  "./src/animals.js": "./src/animals.js?v=1794053524",
-  "./src/snap.js": "./src/snap.js?v=1794053524",
-  "./src/lotus.js": "./src/lotus.js?v=1794053524",
-  "./src/fish.js": "./src/fish.js?v=1794053524"
+  "./src/campus.js": "./src/campus.js?v=1794054286",
+  "./src/ground.js": "./src/ground.js?v=1794054286",
+  "./src/foliage.js": "./src/foliage.js?v=1794054286",
+  "./src/models.js": "./src/models.js?v=1794054286",
+  "./src/animals.js": "./src/animals.js?v=1794054286",
+  "./src/snap.js": "./src/snap.js?v=1794054286",
+  "./src/lotus.js": "./src/lotus.js?v=1794054286",
+  "./src/fish.js": "./src/fish.js?v=1794054286"
 } }
 </script>
 </head>
@@ -26,7 +26,22 @@
 <nav id="dots" aria-label="動物列表"></nav>
 <main id="story"></main>
 <div id="loading">校園載入中…</div>
+<script>
+// 載入失敗時把錯誤寫在載入畫面上（手機上看不到 console，不然只會一直停在「載入中」）
+(function () {
+  const show = (msg) => {
+    const el = document.getElementById('loading')
+    if (!el || el.classList.contains('done')) return
+    let d = el.querySelector('.err')
+    if (!d) { d = document.createElement('div'); d.className = 'err'; d.style.cssText = 'font:12px/1.4 monospace;color:#a33;margin-top:12px;max-width:90vw;white-space:pre-wrap;word-break:break-all'; el.appendChild(d) }
+    d.textContent += String(msg).slice(0, 400) + '\n'
+  }
+  addEventListener('error', (e) => show('錯誤：' + (e.message || e.target?.src || e.target?.href || e) + (e.filename ? '\n' + e.filename.split('/').pop() + ':' + e.lineno : '')), true)
+  addEventListener('unhandledrejection', (e) => show('錯誤：' + (e.reason?.stack || e.reason?.message || e.reason)))
+  window.__fjuStep = (s) => { const el = document.getElementById('loading'); if (el && !el.classList.contains('done')) el.firstChild.textContent = '校園載入中…（' + s + '）' }
+})()
+</script>
 <!-- ?v= 是版本號：GitHub Pages 會把 JS 和模型快取 10 分鐘，每次部署跑 tools/bump-version.sh 換號才會馬上看到新版 -->
-<script type="module" src="src/main.js?v=1794053524"></script>
+<script type="module" src="src/main.js?v=1794054286"></script>
 </body>
 </html>
