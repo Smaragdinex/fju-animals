@@ -158,7 +158,7 @@ async function init() {
 function loadAnimalsInBackground() {
   const pill = document.createElement('div')
   pill.id = 'animal-loading'
-  pill.style.cssText = 'position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:5;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.85);color:#3c4a3a;font:13px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);pointer-events:none;transition:opacity .6s'
+  pill.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top));white-space:nowrap;z-index:5;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.85);color:#3c4a3a;font:13px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);pointer-events:none;transition:opacity .6s'
   document.body.appendChild(pill)
   const byId = new Map(animals.map((a) => [a.def.id, a]))
   let placed = 0
@@ -173,7 +173,8 @@ function loadAnimalsInBackground() {
     })
     renderer.compileAsync(a.group, camera, scene).catch(() => {})
   }, (got, tot, files, all) => {
-    pill.textContent = `動物下載中 ${(got / 1048576).toFixed(1)}${tot ? ' / ' + (tot / 1048576).toFixed(1) : ''} MB（${placed} / ${animals.length}）`
+    // 有些檔案伺服器不給總大小，所以只顯示已下載多少
+    pill.textContent = `動物下載中 ${placed} / ${animals.length}（${(got / 1048576).toFixed(1)} MB）`
   }).then(() => {
     console.log(`[fju] 動物全部下載完 ${Math.round(performance.now() - t0)} ms`)
     pill.textContent = '動物都到齊了'
