@@ -81,12 +81,18 @@ const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vect
 let shots = [], animals = [], pins = [], ready = false, detail = null, lotus = null, fish = null
 
 // 載入畫面上顯示目前做到哪一步（index.html 的 __fjuStep），讓畫面有機會更新
-const step = async (s) => { window.__fjuStep?.(s); console.log('[fju] 步驟', s, Math.round(performance.now())); await new Promise((r) => setTimeout(r, 0)) }
+const STEPS = ['地圖', '停棲處', '荷花', '魚', '烘焙光影', '草葉', '預熱每一站', '編譯著色器']
+const step = async (s) => {
+  const pct = Math.round((STEPS.indexOf(s) / STEPS.length) * 100)
+  window.__fjuStep?.(`${pct}%・${s}`)
+  console.log('[fju] 步驟', s, Math.round(performance.now()))
+  await new Promise((r) => setTimeout(r, 0))
+}
 async function init() {
   useRenderer(renderer)
-  await step('地圖和動物模型')
-  const [campus] = await Promise.all([buildCampus(scene), loadAnimalModels()])
-  await step('放動物')
+  await step('地圖')
+  const campus = await buildCampus(scene)
+  await step('停棲處')
   animals = ANIMALS.map((def) => {
     const a = placeAnimal(def, WATER_Y)
     scene.add(a.group)
@@ -143,6 +149,36 @@ async function init() {
   console.log(`[fju] 預熱 ${Math.round(performance.now() - t0)} ms`)
   ready = true
   document.getElementById('loading').classList.add('done')
+  console.log(`[fju] 校園出現 ${Math.round(performance.now())} ms`)
+  loadAnimalsInBackground()
+}
+
+// 動物模型在背景下載（約 12 MB）：校園先出現可以先看、先讀介紹，動物下載好一隻放一隻。
+// 放上去之後在背景編譯著色器、上傳貼圖，滑到那一站時才不會卡。
+function loadAnimalsInBackground() {
+  const pill = document.createElement('div')
+  pill.id = 'animal-loading'
+  pill.style.cssText = 'position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:5;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.85);color:#3c4a3a;font:13px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);pointer-events:none;transition:opacity .6s'
+  document.body.appendChild(pill)
+  const byId = new Map(animals.map((a) => [a.def.id, a]))
+  let placed = 0
+  const t0 = performance.now()
+  loadAnimalModels(animals.map((a) => a.def.id), (id) => {
+    const a = byId.get(id)
+    a.attach()
+    placed++
+    a.group.updateMatrixWorld(true)
+    a.group.traverse((o) => {
+      for (const m of [].concat(o.material || [])) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) if (m[k]) renderer.initTexture(m[k])
+    })
+    renderer.compileAsync(a.group, camera, scene).catch(() => {})
+  }, (got, tot, files, all) => {
+    pill.textContent = `動物下載中 ${(got / 1048576).toFixed(1)}${tot ? ' / ' + (tot / 1048576).toFixed(1) : ''} MB（${placed} / ${animals.length}）`
+  }).then(() => {
+    console.log(`[fju] 動物全部下載完 ${Math.round(performance.now() - t0)} ms`)
+    pill.textContent = '動物都到齊了'
+    setTimeout(() => { pill.style.opacity = '0'; setTimeout(() => pill.remove(), 700) }, 1200)
+  })
 }
 
 /* ---------- 標籤 ---------- */

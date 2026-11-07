@@ -285,18 +285,33 @@ const BUILD = {
 /* ---------- 現成模型 ---------- */
 // 松鼠和烏龜用網路上別人做好的寫實模型（來源與授權見 README、頁尾），載入後用頂點著色器把尾巴、頭、腳彎動。
 const GLB = {}
-export async function loadAnimalModels() {
+// 每種動物要用到哪些模型檔
+const NEEDS = {
+  heron: ['heron-rig'], dove: ['dove-rig'], nightheron: ['night-heron-rig'], bulbul: ['bulbul-rig'], whiteeye: ['whiteeye-rig'],
+  barbet: ['barbet-rig'], treepie: ['treepie-rig'], squirrel: ['squirrel-rig'], lizard: ['tree-lizard-rig'], turtle: ['pond-turtle-rig', 'slider-rig'],
+}
+// 在背景依故事順序下載模型（一次兩個，前面幾站的動物先到）。每種動物的檔案到齊就呼叫 onReady(id)。
+// 頁面不用等這些：校園先出現，動物下載好再放上去（和 xarts.games 大廳先開、房間在背景載一樣）。
+export function loadAnimalModels(order, onReady, onProgress) {
   const L = new GLTFLoader(), D = new DRACOLoader()
   D.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
   L.setDRACOLoader(D)
-  // 下載進度顯示在載入畫面上（手機網路慢時才知道不是當掉）
-  const names = ['squirrel-rig', 'pond-turtle-rig', 'slider-rig', 'night-heron-rig', 'tree-lizard-rig', 'barbet-rig', 'bulbul-rig', 'whiteeye-rig', 'treepie-rig', 'dove-rig', 'heron-rig']
+  const queue = [...new Set(order.flatMap((id) => NEEDS[id] || []))]
   const got = {}, tot = {}
-  const report = () => {
-    const a = Object.values(got).reduce((x, y) => x + y, 0), b = Object.values(tot).reduce((x, y) => x + y, 0)
-    if (b) window.__fjuStep?.(`下載動物模型 ${(a / 1048576).toFixed(1)} / ${(b / 1048576).toFixed(1)} MB`)
+  const report = () => onProgress?.(Object.values(got).reduce((x, y) => x + y, 0), Object.values(tot).reduce((x, y) => x + y, 0), Object.keys(GLB).length, queue.length)
+  const check = () => { for (const id of order) if (!check.done.has(id) && (NEEDS[id] || []).every((n) => GLB[n])) { check.done.add(id); onReady(id) } }
+  check.done = new Set()
+  const worker = async () => {
+    while (queue.length) {
+      const n = queue.shift()
+      try {
+        const g = await L.loadAsync(`models/${n}.glb?m=${MODEL_VER}`, (e) => { got[n] = e.loaded; if (e.total) tot[n] = e.total; report() })
+        GLB[n] = g.scene
+      } catch (err) { console.error('[fju] 模型載入失敗', n, err) }
+      report(); check()
+    }
   }
-  await Promise.all(names.map((n) => L.loadAsync(`models/${n}.glb?m=${MODEL_VER}`, (e) => { got[n] = e.loaded; if (e.total) tot[n] = e.total; report() }).then((g) => { GLB[n] = g.scene })))
+  return Promise.all([worker(), worker()])
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
@@ -1139,18 +1154,24 @@ export function placeAnimal(def, waterY) {
     target.set(x, 0.8, z)
     dist = 5.2; camH = 2.4
   }
-  const built = BUILD[def.id](env)
-  obj.add(built.obj)
-  // 動物本身不接收陰影（停在樹蔭下也要看得清楚），也不烘進地面
-  built.obj.traverse((o) => { if (o.isMesh) { o.receiveShadow = !!o.userData.catcher; o.userData.noBake = true } })
-
-  // 鏡頭目標跟著動物走一部分
+  // 停棲處（樹、枝條、石頭）和鏡頭位置先放好；動物本身等模型下載完才用 attach() 放上去
   const base = target.clone(), f0 = V(), fw = V()
-  g.updateMatrixWorld(true)
-  built.update(0, 0.016)
-  g.updateMatrixWorld(true)
-  obj.localToWorld(f0.copy(built.focus))
+  let built = null
+  const attach = () => {
+    if (built) return built
+    built = BUILD[def.id](env)
+    obj.add(built.obj)
+    // 動物本身不接收陰影（停在樹蔭下也要看得清楚），也不烘進地面
+    built.obj.traverse((o) => { if (o.isMesh) { o.receiveShadow = !!o.userData.catcher; o.userData.noBake = true } })
+    // 鏡頭目標跟著動物走一部分
+    g.updateMatrixWorld(true)
+    built.update(0, 0.016)
+    g.updateMatrixWorld(true)
+    obj.localToWorld(f0.copy(built.focus))
+    return built
+  }
   const update = (t, dt) => {
+    if (!built) return
     built.update(t, dt)
     obj.updateMatrixWorld()
     obj.localToWorld(fw.copy(built.focus)).sub(f0)
@@ -1159,5 +1180,5 @@ export function placeAnimal(def, waterY) {
   }
   const cam = base.clone().addScaledVector(toCam, dist)
   cam.y = camH
-  return { group: g, update, target, cam, built }
+  return { group: g, update, target, cam, attach, get built() { return built } }
 }
