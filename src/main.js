@@ -69,7 +69,8 @@ steps.forEach((_, i) => {
   dots.appendChild(b)
 })
 // 一次滑一站（見 snap.js）；點圓點、標籤、名字也走同一套動畫
-const snap = snapScroll(steps)
+// 一出發往某一站就讓那隻動物插隊下載（不等飛到）
+const snap = snapScroll(steps, { onChange: (i) => setTimeout(() => watchActive(i - 1)) })
 function goTo(i) { snap.goTo(i) }
 const wide = matchMedia('(min-width: 721px)')
 const openFacts = () => document.querySelectorAll('details.facts').forEach((d) => { d.open = wide.matches })
@@ -81,7 +82,7 @@ const OVERVIEW = { pos: new THREE.Vector3(250, 470, 620), target: new THREE.Vect
 let shots = [], animals = [], pins = [], ready = false, detail = null, lotus = null, fish = null
 
 // 載入畫面上顯示目前做到哪一步（index.html 的 __fjuStep），讓畫面有機會更新
-const STEPS = ['地圖', '停棲處', '荷花', '魚', '烘焙光影', '草葉', '預熱每一站', '編譯著色器']
+const STEPS = ['地圖', '停棲處', '荷花', '魚', '烘焙光影', '草葉', '預熱每一站', '第一隻動物', '編譯著色器']
 const step = async (s) => {
   const pct = Math.round((STEPS.indexOf(s) / STEPS.length) * 100)
   window.__fjuStep?.(`${pct}%・${s}`)
@@ -90,6 +91,8 @@ const step = async (s) => {
 }
 async function init() {
   useRenderer(renderer)
+  // 動物模型一開始就在背景下載（和建校園同時進行）；第一站的動物到了才打開頁面，其他的邊看邊下載
+  startAnimalDownload()
   await step('地圖')
   const campus = await buildCampus(scene)
   await step('停棲處')
@@ -98,6 +101,7 @@ async function init() {
     scene.add(a.group)
     return { def, ...a }
   })
+  for (const id of readyIds) attachAnimal(id)   // 停棲處放好之前就下載完的動物
   // 動物地點和鏡頭之間不種樹
   const clear = []
   for (const a of animals) {
@@ -144,42 +148,69 @@ async function init() {
     for (const a of animals) a.update(0, 0.016)
     renderer.render(scene, camera)
   }
+  await step('第一隻動物')
+  await Promise.race([firstAnimal, new Promise((r) => setTimeout(r, 25000))])   // 網路太差也最多等 25 秒，之後邊看邊等
   await step('編譯著色器')
   await renderer.compileAsync(scene, camera)
   console.log(`[fju] 預熱 ${Math.round(performance.now() - t0)} ms`)
   ready = true
   document.getElementById('loading').classList.add('done')
   console.log(`[fju] 校園出現 ${Math.round(performance.now())} ms`)
-  loadAnimalsInBackground()
+  pillShow = true; updatePill()
 }
 
-// 動物模型在背景下載（約 12 MB）：校園先出現可以先看、先讀介紹，動物下載好一隻放一隻。
-// 放上去之後在背景編譯著色器、上傳貼圖，滑到那一站時才不會卡。
-function loadAnimalsInBackground() {
-  const pill = document.createElement('div')
-  pill.id = 'animal-loading'
-  pill.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top));white-space:nowrap;z-index:5;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.85);color:#3c4a3a;font:13px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);pointer-events:none;transition:opacity .6s'
-  document.body.appendChild(pill)
-  const byId = new Map(animals.map((a) => [a.def.id, a]))
-  let placed = 0
-  const t0 = performance.now()
-  loadAnimalModels(animals.map((a) => a.def.id), (id) => {
-    const a = byId.get(id)
-    a.attach()
-    placed++
-    a.group.updateMatrixWorld(true)
-    a.group.traverse((o) => {
-      for (const m of [].concat(o.material || [])) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) if (m[k]) renderer.initTexture(m[k])
-    })
-    renderer.compileAsync(a.group, camera, scene).catch(() => {})
-  }, (got, tot, files, all) => {
-    // 有些檔案伺服器不給總大小，所以只顯示已下載多少
-    pill.textContent = `動物下載中 ${placed} / ${animals.length}（${(got / 1048576).toFixed(1)} MB）`
-  }).then(() => {
-    console.log(`[fju] 動物全部下載完 ${Math.round(performance.now() - t0)} ms`)
-    pill.textContent = '動物都到齊了'
-    setTimeout(() => { pill.style.opacity = '0'; setTimeout(() => pill.remove(), 700) }, 1200)
+// 動物模型（約 12 MB）在背景依故事順序下載，下載好一隻就放上去，再背景編譯著色器、上傳貼圖。
+// 頁面只等第一站的動物；使用者滑到還沒下載好的那一站，就讓那隻插隊，並在上方顯示「載入中」。
+let loader = null, firstAnimal = null, pillShow = false, gotMB = 0, curActive = -1
+const readyIds = new Set()
+const pill = document.createElement('div')
+pill.id = 'animal-loading'
+pill.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top));white-space:nowrap;z-index:5;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.88);color:#3c4a3a;font:13px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);pointer-events:none;transition:opacity .6s;opacity:0'
+document.body.appendChild(pill)
+function updatePill() {
+  if (!pillShow) return
+  const a = animals[curActive]
+  if (readyIds.size >= ANIMALS.length) {
+    if (pill.dataset.done) return
+    pill.dataset.done = 1; pill.textContent = '動物都到齊了'; pill.style.opacity = '1'
+    setTimeout(() => { pill.style.opacity = '0' }, 1500)
+    return
+  }
+  pill.style.opacity = '1'
+  pill.textContent = a && !readyIds.has(a.def.id)
+    ? `${a.def.name}正在趕來…（${gotMB.toFixed(1)} MB）`
+    : `動物下載中 ${readyIds.size} / ${ANIMALS.length}（${gotMB.toFixed(1)} MB）`
+}
+function attachAnimal(id) {
+  const a = animals.find((x) => x.def.id === id)
+  if (!a || a.built) return
+  a.attach()
+  a.group.updateMatrixWorld(true)
+  a.group.traverse((o) => {
+    for (const m of [].concat(o.material || [])) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) if (m[k]) renderer.initTexture(m[k])
   })
+  if (ready) renderer.compileAsync(a.group, camera, scene).catch(() => {})
+}
+function startAnimalDownload() {
+  const order = ANIMALS.map((d) => d.id)
+  let resolveFirst
+  firstAnimal = new Promise((r) => { resolveFirst = r })
+  const t0 = performance.now()
+  loader = loadAnimalModels(order, (id) => {
+    readyIds.add(id)
+    attachAnimal(id)          // 停棲處還沒放好時先記著，放好後 init 會補上
+    if (id === order[0]) resolveFirst()
+    updatePill()
+  }, (got) => { gotMB = got / 1048576; updatePill() })
+  loader.done.then(() => { console.log(`[fju] 動物全部下載完 ${Math.round(performance.now() - t0)} ms`); updatePill() })
+}
+// 每格檢查：目前這站的動物還沒到就讓牠插隊
+function watchActive(active) {
+  if (active === curActive) return
+  curActive = active
+  const a = animals[active]
+  if (a && !readyIds.has(a.def.id)) loader?.prioritize(a.def.id)
+  updatePill()
 }
 
 /* ---------- 標籤 ---------- */
@@ -334,6 +365,7 @@ function frame() {
   // 飛行途中（不在任何一站上）樹葉溶掉的範圍放大
   foliageNear.value = THREE.MathUtils.lerp(2.8, 9, THREE.MathUtils.smoothstep(Math.abs(p - nearest), 0.02, 0.12))
   updatePins(active)
+  watchActive(active)
   ;[...dots.children].forEach((d, i) => d.classList.toggle('on', i === nearest))
   renderer.render(scene, camera)
 }

@@ -291,6 +291,7 @@ const NEEDS = {
   barbet: ['barbet-rig'], treepie: ['treepie-rig'], squirrel: ['squirrel-rig'], lizard: ['tree-lizard-rig'], turtle: ['pond-turtle-rig', 'slider-rig'],
 }
 // 在背景依故事順序下載模型（一次兩個，前面幾站的動物先到）。每種動物的檔案到齊就呼叫 onReady(id)。
+// 回傳 { done, prioritize(id) }：滑到還沒到的那一站時，prioritize 讓那隻插隊。
 // 頁面不用等這些：校園先出現，動物下載好再放上去（和 xarts.games 大廳先開、房間在背景載一樣）。
 export function loadAnimalModels(order, onReady, onProgress) {
   const L = new GLTFLoader(), D = new DRACOLoader()
@@ -301,6 +302,10 @@ export function loadAnimalModels(order, onReady, onProgress) {
   const report = () => onProgress?.(Object.values(got).reduce((x, y) => x + y, 0), Object.values(tot).reduce((x, y) => x + y, 0), Object.keys(GLB).length, queue.length)
   const check = () => { for (const id of order) if (!check.done.has(id) && (NEEDS[id] || []).every((n) => GLB[n])) { check.done.add(id); onReady(id) } }
   check.done = new Set()
+  // 使用者滑到某一站、那隻動物還沒下載：把牠的檔案排到最前面
+  const prioritize = (id) => {
+    for (const n of [...(NEEDS[id] || [])].reverse()) { const i = queue.indexOf(n); if (i > 0) { queue.splice(i, 1); queue.unshift(n) } }
+  }
   const worker = async () => {
     while (queue.length) {
       const n = queue.shift()
@@ -311,7 +316,7 @@ export function loadAnimalModels(order, onReady, onProgress) {
       report(); check()
     }
   }
-  return Promise.all([worker(), worker()])
+  return { done: Promise.all([worker(), worker()]), prioritize }
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
