@@ -312,11 +312,37 @@ export function loadAnimalModels(order, onReady, onProgress) {
       try {
         const g = await L.loadAsync(`models/${n}.glb?m=${MODEL_VER}`, (e) => { got[n] = e.loaded; if (e.total) tot[n] = e.total; report() })
         GLB[n] = g.scene
+        g.scene.traverse((o) => { if (o.isMesh) fixWinding(o.geometry) })
       } catch (err) { console.error('[fju] 模型載入失敗', n, err) }
       report(); check()
     }
   }
   return { done: Promise.all([worker(), worker()]), prioritize }
+}
+// 減面時翻掉的三角形（頂點順序跟法線相反）：只畫正面時變成破洞，看到後面深色的翅膀——身上一片片碎片。
+// 樹鵲、綠繡眼、白頭翁約 9% 的面是反的（2026-11-08，跟 bird-park 同一個修法）。載入時照頂點法線把順序轉回來。
+function fixWinding(g) {
+  const p = g.attributes.position, n = g.attributes.normal, ix = g.index
+  if (!p || !n || !ix) return
+  const a = ix.array
+  for (let i = 0; i < a.length; i += 3) {
+    const i0 = a[i], i1 = a[i + 1], i2 = a[i + 2]
+    const e1x = p.getX(i1) - p.getX(i0), e1y = p.getY(i1) - p.getY(i0), e1z = p.getZ(i1) - p.getZ(i0)
+    const e2x = p.getX(i2) - p.getX(i0), e2y = p.getY(i2) - p.getY(i0), e2z = p.getZ(i2) - p.getZ(i0)
+    const fx = e1y * e2z - e1z * e2y, fy = e1z * e2x - e1x * e2z, fz = e1x * e2y - e1y * e2x
+    const nx = n.getX(i0) + n.getX(i1) + n.getX(i2), ny = n.getY(i0) + n.getY(i1) + n.getY(i2), nz = n.getZ(i0) + n.getZ(i1) + n.getZ(i2)
+    if (fx * nx + fy * ny + fz * nz < 0) { a[i + 1] = i2; a[i + 2] = i1 }
+  }
+  ix.needsUpdate = true
+  // 有些頂點的法線本身就是反的（約 1.5%）：打光時那一小塊亮暗顛倒，胸口出現亮白鋸齒。
+  // 用轉好的面重算一次法線，只換掉跟原本方向相反的那些頂點（其他保留原本平滑的法線）
+  const keep = n.clone()
+  g.computeVertexNormals()
+  const nn = g.attributes.normal
+  for (let i = 0; i < nn.count; i++) {
+    if (keep.getX(i) * nn.getX(i) + keep.getY(i) * nn.getY(i) + keep.getZ(i) * nn.getZ(i) >= 0) nn.setXYZ(i, keep.getX(i), keep.getY(i), keep.getZ(i))
+  }
+  nn.needsUpdate = true
 }
 /* ---------- 有骨架的現成模型：用「模型座標的軸」轉骨頭 ---------- */
 // 每根骨頭的本地軸方向都不一樣（Blender 的 roll），直接轉 x/y/z 左右腳會不對稱。
