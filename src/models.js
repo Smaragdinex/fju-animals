@@ -336,11 +336,16 @@ function fixWinding(g) {
   ix.needsUpdate = true
   // 有些頂點的法線本身就是反的（約 1.5%）：打光時那一小塊亮暗顛倒，胸口出現亮白鋸齒。
   // 用轉好的面重算一次法線，只換掉跟原本方向相反的那些頂點（其他保留原本平滑的法線）
+  // 早期那三隻（樹鵲、綠繡眼、白頭翁）約 10% 的法線歪了 60° 以上（只換反向的還留下白色碎片）：這種模型整個用重算的法線
   const keep = n.clone()
   g.computeVertexNormals()
   const nn = g.attributes.normal
-  for (let i = 0; i < nn.count; i++) {
-    if (keep.getX(i) * nn.getX(i) + keep.getY(i) * nn.getY(i) + keep.getZ(i) * nn.getZ(i) >= 0) nn.setXYZ(i, keep.getX(i), keep.getY(i), keep.getZ(i))
+  let off = 0
+  for (let i = 0; i < nn.count; i++) if (keep.getX(i) * nn.getX(i) + keep.getY(i) * nn.getY(i) + keep.getZ(i) * nn.getZ(i) < 0.5) off++
+  if (off / nn.count < 0.08) {
+    for (let i = 0; i < nn.count; i++) {
+      if (keep.getX(i) * nn.getX(i) + keep.getY(i) * nn.getY(i) + keep.getZ(i) * nn.getZ(i) >= 0) nn.setXYZ(i, keep.getX(i), keep.getY(i), keep.getZ(i))
+    }
   }
   nn.needsUpdate = true
 }
